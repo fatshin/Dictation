@@ -56,11 +56,13 @@ coverage/
 .nyc_output/
 *.lcov
 
-# Research (large recordings)
+# Research (large recordings, downloaded model weights, sqlite dbs)
 research/phase0/recordings/*.wav
 research/phase0/recordings/*.m4a
 research/phase0/results/*.sqlite
 research/phase0/results/*.log
+research/phase0/results/asr_hyp/
+research/phase0/downloads/
 
 # Python (for bench scripts)
 __pycache__/

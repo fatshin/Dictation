@@ -177,8 +177,11 @@ def run_bench(
             if hasattr(config, "append_provider"):
                 config.append_provider(ep)
         model = og.Model(config)
-    except (AttributeError, TypeError):
-        # Older onnxruntime-genai: no Config API, fall back to default EP
+    except (AttributeError, TypeError, RuntimeError):
+        # Config path is unstable across onnxruntime-genai releases; fall back
+        # to plain Model(dir) which honours whatever EP genai_config.json
+        # declares. EP tag stays recorded for audit, but note it may not be
+        # what actually ran.
         model = og.Model(str(model_dir))
     tokenizer = og.Tokenizer(model)
 
@@ -193,12 +196,15 @@ def run_bench(
             temperature=0.0,
         )
 
+        # TTFT = wall clock from the moment we hand input tokens to the
+        # generator until the first output token is materialised. This
+        # intentionally includes prefill (the expensive part) — that is what
+        # the user actually perceives as "first response".
         generator = og.Generator(model, params)
-        generator.append_tokens(input_ids)
-
         produced: list[int] = []
         peak_ram = _peak_rss_mb()
         t0 = time.perf_counter()
+        generator.append_tokens(input_ids)
         ttft_ms: float | None = None
 
         while not generator.is_done() and len(produced) < max_new_tokens:
