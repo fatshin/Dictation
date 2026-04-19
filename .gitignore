@@ -1,0 +1,73 @@
+# Build artifacts
+target/
+dist/
+build/
+out/
+*.dmg
+*.msix
+*.msi
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Rust
+Cargo.lock.bak
+**/*.rs.bk
+
+# Models (downloaded at install, never committed)
+models/*
+!models/.gitkeep
+!models/README.md
+!models/MANIFEST.json
+
+# Sidecar binaries (built or downloaded in CI)
+sidecars/*
+!sidecars/.gitkeep
+!sidecars/README.md
+
+# Secrets and environment
+.env
+.env.local
+.env.*.local
+*.pfx
+*.p12
+*.cer
+*.key
+signing/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Test output
+coverage/
+.nyc_output/
+*.lcov
+
+# Research (large recordings)
+research/phase0/recordings/*.wav
+research/phase0/recordings/*.m4a
+research/phase0/results/*.sqlite
+research/phase0/results/*.log
+
+# Python (for bench scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
