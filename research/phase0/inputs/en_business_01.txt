@@ -1,0 +1,30 @@
+# Benchmark case: en_business_01
+# Task type: en_business
+# Expected difficulty: easy
+# Length (chars): 94 / 246
+
+## INPUT
+
+hey pls check the q3 numbers asap, something looks off in the revenue col. also need ur sign-off by eod thx
+
+## EXPECTED
+
+Subject: Request for Q3 Numbers Review and Sign-off
+
+Hi,
+
+Could you please review the Q3 figures at your earliest convenience? I noticed something appears inconsistent in the revenue column and would appreciate your assessment.
+
+Additionally, I would like to request your sign-off by end of day today.
+
+Thank you for your attention to this matter.
+
+Best regards,
+
+## NOTES
+
+- Slack-casual style (lowercase, "pls", "ur", "asap", "eod", "thx") → full formal email
+- Retain specific references (Q3 numbers, revenue column, sign-off request)
+- Add proper greeting, subject line, closing
+- "something looks off" → neutralized to "appears inconsistent"
+- Evaluation criteria: (a) register upgrade completeness (b) information preservation (c) appropriate salutation/closing

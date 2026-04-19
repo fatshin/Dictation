@@ -1,0 +1,42 @@
+# Benchmark case: jp_en_mix_04
+# Task type: jp_en_mix
+# Expected difficulty: hard
+# Length (chars): 612 / 658
+
+## INPUT
+
+In terms of the architecture, 今のmonolithicなstackだとscaling limitがあって、特にwrite-heavyなworkloadでbottleneckが出る。So we're thinking of going microservices, 具体的にはorder serviceとinventory serviceをまず切り出す。Event-driven approachでKafka挟んで、eventual consistencyは許容する方向。But there's a trade-off: operational complexityが爆発する。observabilityどうするか、distributed tracingちゃんと入れないとdebugできなくなる。あと、teamのcapabilityもまだ足りてない。Kubernetes運用できるengineerが2人しかいない。So realistically, phase 1はservice extractionだけにとどめて、phase 2でevent-drivenに移行、phase 3でfull microservicesにscale outする。Timeline的にはmaybe 18 months total.
+
+## EXPECTED
+
+アーキテクチャ方針に関する整理:
+
+現状のmonolithic stackにはscaling limitが存在し、特にwrite-heavyなworkloadでboundleneckが発生している。このため、microservicesアーキテクチャへの移行を検討する。
+
+【対象サービスの切り出し】
+- 第一段階としてorder serviceおよびinventory serviceを分離する。
+- Event-driven approachを採用し、Kafkaをメッセージブローカーとして介在させる。
+- eventual consistencyは許容する方針とする。
+
+【トレードオフ】
+operational complexityの急増が避けられない。具体的には以下の対策が必須となる:
+- Observabilityの整備
+- Distributed tracingの導入(これなしではdebugが事実上不可能)
+
+【チーム体制上の制約】
+現時点でKubernetes運用の実務経験を持つengineerは2名に留まる。capabilityの追加育成・採用が必要。
+
+【段階的ロードマップ】
+- Phase 1: service extraction(サービス分離のみ)
+- Phase 2: event-driven architectureへの移行
+- Phase 3: full microservicesへのscale out
+- 想定期間: 合計約18ヶ月
+
+## NOTES
+
+- 英日の比率が約50/50のcode-switching多発ケース
+- 技術概念(monolithic, microservices, event-driven, eventual consistency, observability, distributed tracing, service extraction, scale out)は英語保持
+- 固有名詞(Kafka, Kubernetes)はそのまま
+- 文頭の「In terms of」「So」「But」などのdiscourse markerは日本語の接続詞に翻訳
+- 構造化(対象サービス/トレードオフ/制約/ロードマップ)で読みやすさ向上
+- 採点観点: (a) code-switchingの適切な処理 (b) 技術用語の英語維持 (c) 論理構造の明確化

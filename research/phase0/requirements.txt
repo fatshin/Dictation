@@ -1,0 +1,28 @@
+# Phase 0 PoC dependencies -- pinned for reproducibility.
+
+# ONNX generative runtime (modern append_tokens / generate_next_token API)
+onnxruntime-genai==0.13.1
+# CPU backend that onnxruntime-genai delegates to. CoreML EP is bundled on macOS.
+onnxruntime==1.24.4
+
+# Model download (HF snapshot_download + API)
+huggingface_hub==0.35.1
+
+# LLM-as-judge client (Claude Opus 4.7, 1M context)
+anthropic==0.68.0
+
+# Resident-set-size sampling for peak RAM
+psutil==6.1.1
+
+# WER / CER metrics
+jiwer==3.0.5
+
+# Audio I/O and tensor ops
+soundfile==0.12.1
+numpy==1.26.4
+
+# CLI output
+rich==13.9.4
+
+# Writing TOML manifests / config
+tomli-w==1.1.0

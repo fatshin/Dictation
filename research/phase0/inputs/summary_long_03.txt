@@ -1,0 +1,93 @@
+# Benchmark case: summary_long_03
+# Task type: summary
+# Expected difficulty: hard
+# Length (chars): input 7500 / output 540
+
+## INPUT
+
+speaker:
+Good afternoon everyone, thanks for joining. Today I want to walk through our journey of deploying local LLMs inside a regulated financial services environment. I'll try to keep this practical rather than theoretical. For context, we process about 2 million customer transactions a day, and we have strict rules about data residency and no third party clouds for anything that touches PII.
+
+speaker:
+When we started this project about 18 months ago, the assumption was that we had to use cloud APIs like OpenAI or Anthropic for the quality. The internal expectation was that local models would be maybe 6 to 12 months behind. What we actually found, and this surprised us, is that for our use cases which are mostly classification, extraction, and short generation, the gap closed much faster than we expected. Small models in the 3B to 7B range, properly fine-tuned, are now within 5 to 8 percent of the big cloud models on our internal benchmarks.
+
+speaker:
+The first major decision was what hardware to target. We had three options. Option one, beef up our existing CPU servers and run quantized models on CPU. Option two, deploy specialized GPU instances on prem. Option three, use the NPU chips that are starting to appear in laptops, so the inference actually runs on the end user's device. We did a pilot of all three. CPU was too slow for anything real time, roughly 10 tokens per second on a decent CPU for a 7B model, which our users said was unacceptable. GPU on prem worked well but the capex was large and operational overhead was significant. NPU on laptop was the dark horse winner for certain classes of use case because the marginal cost per user is zero once you've shipped the binary.
+
+speaker:
+Now I want to address the elephant in the room which is quality. Everyone asks, can a 3B or 4B model really do business class work. The honest answer is, it depends entirely on what you mean by business class. For summarization, classification, and routine rewriting, absolutely yes, and we have production evidence of this. For complex reasoning, multi-step analysis, or anything that requires combining information from many sources, the small models still struggle. Our approach is to route queries. Simple queries, which are about 85 percent of our volume, go to a local 4B model. The remaining 15 percent that need deeper reasoning are escalated to a larger model with appropriate privacy controls.
+
+speaker:
+Privacy architecture was the most interesting engineering problem. We built a three tier system. Tier one is fully local, everything runs on the user device, and we can prove with a packet capture that no data leaves. This covers about 70 percent of queries. Tier two is local encrypted relay, the query goes to a server in our DMZ, is processed by a larger model, and the result comes back, but we wrap everything in envelope encryption where only the user's device holds the decryption key. Tier three is redacted cloud, for the most complex queries we route to a major cloud LLM but with automatic redaction of any PII before the query leaves the DMZ. This gets used about 2 percent of the time.
+
+speaker:
+Cost implications are interesting too. Our previous baseline was all cloud, approximately 40 cents per thousand queries at our volume. After the local first migration, we're at about 4 cents per thousand effective, which is a 10x reduction. The capex for the NPU investment was recouped in about 8 months based on the cost delta alone, not counting the privacy and latency benefits.
+
+speaker:
+Latency is where local really shines. Cloud round trip from our Tokyo office to the nearest GPT-4 region is typically 400 to 600 milliseconds of network overhead alone, before any inference happens. Local inference on the NPU, for our common queries, is 150 to 250 milliseconds total including processing. That's 3 to 4x faster end to end, and it's more consistent because it doesn't depend on network quality.
+
+speaker:
+I want to talk about some failure modes we hit so you can avoid them. First, we initially tried to share model files across users via a network share. Bad idea. Model loading from network storage was slow and unpredictable. Models should be on local disk per user. Second, we underestimated the update story. When you update a cloud API, everyone gets the new version instantly. When you've shipped a model to 5000 laptops, pushing a new version is a deployment exercise in itself. We now version models, run canary cohorts, and staged rollouts, same as regular software releases. Third, we had issues with users running out of disk space. A 4B model is about 2 gigabytes quantized, which sounds fine, but we ship four different specialized models, so it's 8 GB, and users with small SSDs complained. We introduced a model manager that shows disk usage and lets users uninstall models they don't use.
+
+speaker:
+From a regulatory standpoint, local LLMs actually simplified our compliance story. Previously every cloud API integration required a detailed DPA, auditing of the vendor's security posture, annual reviews, and so on. For our local tier, the audit question is entirely internal and much easier to answer. We showed the regulator a signed binary that provably can't send data externally, and they accepted it as equivalent to not having a third party at all, which was a substantial simplification.
+
+speaker:
+Looking forward, the trends I'm watching are, one, the continuing improvement in small model quality. Every 6 months brings a noticeable jump. Two, the proliferation of NPU hardware, especially in Windows ARM machines and the Intel Core Ultra line. Three, the standardization of deployment formats like ONNX Runtime GenAI which let you target multiple backends from a single model artifact.
+
+speaker:
+To conclude, my takeaway is that local first is no longer a research curiosity, it is a legitimate production architecture for many classes of LLM workload. You have to be pragmatic about which queries go where, you have to invest in the deployment and update infrastructure, and you have to be realistic about what small models can and cannot do, but the benefits in cost, latency, privacy, and regulatory simplicity are substantial. Happy to take questions.
+
+## EXPECTED
+
+# 講演要約: 金融規制環境における Local LLM 導入
+
+## エグゼクティブサマリ
+
+日次200万トランザクションを扱う金融業で、18ヶ月かけて Local LLM を本番導入。小型モデル (3-7B) はファインチューニング後にクラウド比 5-8% の精度差まで接近。コスト 10倍削減、レイテンシ 3-4倍改善、規制対応も大幅簡素化を達成。ただし適用領域の選別とデプロイ運用への投資が前提。
+
+## ハードウェア選定
+
+- CPU: 7Bモデルで 10 tok/s、リアルタイム用途に不十分
+- オンプレGPU: 性能十分だが CAPEX と運用負荷大
+- **NPU on laptop: 勝者**。エンドユーザーデバイスで推論するため追加ユーザーあたりのコストがゼロ
+
+## 品質とクエリルーティング
+
+- Simple クエリ (85%): ローカル 4B モデル
+- 深い推論が必要 (15%): プライバシー制御付きで大規模モデルへエスカレーション
+
+## 3層プライバシーアーキテクチャ
+
+1. Fully Local (70%): 全処理端末内、パケットキャプチャで外部送信ゼロを証明可能
+2. Encrypted Relay (28%): DMZ サーバーで大規模モデル処理、エンベロープ暗号化 (鍵はクライアントのみ保持)
+3. Redacted Cloud (2%): PII 自動マスキング後にクラウド LLM
+
+## 定量効果
+
+- コスト: 40¢ / 1000 クエリ → 4¢ (10x削減)、NPU 投資は 8ヶ月で回収
+- レイテンシ: クラウド往復 400-600ms vs ローカル NPU 150-250ms (3-4x 高速)
+
+## 失敗モード (回避推奨)
+
+1. モデルをネットワーク共有に置くと読込が遅く不安定 → ユーザーローカル必須
+2. モデル更新の運用設計を軽視 → canary cohort とステージドロールアウト必要
+3. 複数モデル同梱のディスク占有 → モデルマネージャでユーザーが uninstall 可能に
+
+## 規制対応のメリット
+
+- 外部 DPA / ベンダー監査 / 年次レビュー が不要
+- 署名済みバイナリで外部送信不可を実証 → 規制当局は「第三者なし」と同等と判定
+
+## 今後の注視トレンド
+
+- 小型モデル品質の継続的改善 (6ヶ月ごとの飛躍)
+- NPU 普及 (Windows ARM、Intel Core Ultra)
+- ONNX Runtime GenAI による単一モデルでのマルチバックエンド展開
+
+## NOTES
+
+- 7500字の英語講演を540字の日本語構造化サマリに圧縮 (英語→日本語変換+要約の二重タスク)
+- 定量情報 (10x, 3-4x, 85/15%, 70/28/2%, 40¢→4¢) をすべて保持
+- 章立て (サマリ→HW→ルーティング→プライバシー→効果→失敗→規制→トレンド) で逆ピラミッド型
+- 固有名詞 (GPT-4, ONNX Runtime GenAI, NPU, DMZ) は原語保持

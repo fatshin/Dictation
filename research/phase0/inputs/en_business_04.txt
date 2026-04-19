@@ -1,0 +1,37 @@
+# Benchmark case: en_business_04
+# Task type: en_business
+# Expected difficulty: hard
+# Length (chars): 1024 / 926
+
+## INPUT
+
+So um yeah I wanted to give everyone an update on where we are with the platform migration project. Like, we've been working on this for about six months now and honestly there's been a lot of ups and downs. The initial scoping was, you know, maybe too optimistic, we thought we could do it in four months but here we are. The good news is the core infrastructure piece is basically done, we migrated the primary database last weekend and it went smoothly, zero downtime which was great. The bad news is the application layer is way more tangled than we expected, there's like, a ton of legacy dependencies nobody documented and we keep finding surprises. We've burned through about 70% of the budget and we're maybe 55% through the work, so the math isn't great. I think we need to have a serious conversation about either extending the timeline by another two months or cutting scope. My recommendation would be to cut scope, specifically the reporting module and the admin dashboard rebuild, those can be phase two. Thoughts?
+
+## EXPECTED
+
+Dear Team,
+
+I would like to provide an update on the status of our platform migration project.
+
+**Overall progress.** We have been executing this project for approximately six months. While the initial scoping proved more optimistic than warranted — the original four-month target has clearly slipped — we have made meaningful progress.
+
+**What has gone well.** The core infrastructure workstream is essentially complete. The primary database was successfully migrated last weekend with zero downtime, which we consider a significant milestone.
+
+**Challenges encountered.** The application layer has proven substantially more complex than anticipated. We have encountered a considerable volume of undocumented legacy dependencies, and new surprises continue to surface as work progresses.
+
+**Financial and delivery position.** To date, we have consumed approximately 70 percent of the allocated budget while completing roughly 55 percent of the total scope. This variance is material and warrants immediate attention.
+
+**Recommendation.** I believe we need to make a decision between two options: extending the timeline by an additional two months, or reducing scope. My recommendation is to reduce scope. Specifically, I propose deferring the reporting module and the admin dashboard rebuild to a phase-two effort.
+
+I welcome your feedback and would appreciate a decision on direction by the end of this week.
+
+Best regards,
+
+## NOTES
+
+- Long monologue with hedging ("like", "you know", "so um yeah", "maybe", "honestly", "basically") → structured three-section email with bold section headers
+- Preserve all factual data (6 months, 4-month original target, zero downtime, 70% budget, 55% work, 2 months extension option, specific modules to defer)
+- Upgrade register: "the math isn't great" → "This variance is material"
+- Upgrade: "serious conversation" → formal options framing
+- Add explicit call to action (decision by end of week) which was implied in the spoken version
+- Evaluation criteria: (a) filler removal (b) numerical fidelity (c) structural upgrade into executive-readable sections (d) tone consistency without loss of directness

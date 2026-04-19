@@ -1,0 +1,41 @@
+# Benchmark case: jp_en_mix_05
+# Task type: jp_en_mix
+# Expected difficulty: medium
+# Length (chars): 502 / 568
+
+## INPUT
+
+じゃプレゼン始めますね。タイトルは "On-device LLM: Practical Deployment Patterns" です。アジェンダは3つ。one, 現状のlatency課題について。two, quantization techniquesの比較。three, our recommended approach。まずlatencyですが、current cloud-based solutionだとround-trip 2.3秒。これはUX的にaggressiveすぎる。ユーザーはsub-second responseを期待している。次にquantization。INT8, INT4, mixed precisionの3種類をbenchmarkしました。INT4だとmodel sizeが75% reduction、latencyは40% improvementが出ています。ただしaccuracyは3ポイント落ちる。Finally、recommended approachとして、hybrid deploymentを提案します。Sensitive queryはcloud、daily taskはon-deviceで処理する。This balances privacy, latency, and cost。質問ありますか?
+
+## EXPECTED
+
+プレゼンテーション: On-device LLM — Practical Deployment Patterns
+
+【アジェンダ】
+1. 現状のlatency課題
+2. Quantization techniquesの比較
+3. 推奨アプローチ
+
+【1. Latency課題】
+現行のcloud-based solutionではround-trip latencyが2.3秒に達しており、UX観点でaggressiveすぎる水準である。ユーザー側はsub-second responseを期待している。
+
+【2. Quantization技術の比較検証】
+INT8、INT4、mixed precisionの3手法をbenchmark実施:
+- INT4: model sizeが75%削減、latencyは40%改善。ただしaccuracyは3ポイント低下。
+- INT8およびmixed precisionはトレードオフが穏やかだが改善幅も限定的。
+
+【3. 推奨アプローチ】
+Hybrid deploymentを推奨する。
+- Sensitive queryはcloud側で処理
+- Daily taskはon-device処理
+- 本構成によりprivacy、latency、costのバランスが最適化される。
+
+ご質問を承ります。
+
+## NOTES
+
+- プレゼン原稿風の口語("one, two, three" / "Finally" / "This balances...")を箇条書きに再編成
+- 技術用語(latency, quantization, INT8/INT4, mixed precision, hybrid deployment, on-device, round-trip)は英語保持
+- プレゼンタイトルは英語原題を維持
+- 「75% reduction」は「75%削減」、「40% improvement」は「40%改善」と自然な日本語に
+- 採点観点: (a) 数値情報(2.3秒/75%/40%/3ポイント)の完全保持 (b) アジェンダ3点の構造維持 (c) hybrid approachの3要素(privacy/latency/cost)の漏れなし

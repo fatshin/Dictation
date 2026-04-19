@@ -1,0 +1,31 @@
+# Benchmark case: jp_en_mix_03
+# Task type: jp_en_mix
+# Expected difficulty: medium
+# Length (chars): 488 / 556
+
+## INPUT
+
+Acme社のSmithさんから返信きた。引用すると "We've reviewed your proposal and while the technical approach looks solid, we have concerns about the timeline. The three-month implementation window seems aggressive given the scope. Can we schedule a call next week to discuss adjustments?" ということで、要はtimelineに懸念があって、スコープに対して3ヶ月は攻めすぎじゃないかと。来週callしたいって話。こちらの返信案としては、まず謝意を伝えつつ、こちらとしてはphase分割で対応する案もある、と。で、来週のcallはavailabilityを提示する形でいいかな。火曜と木曜の午後あたりで。
+
+## EXPECTED
+
+Acme社Smith様より返信を受領いたしました。
+
+【先方のご指摘要旨】
+提案内容の技術的アプローチは妥当との評価をいただいた一方、3ヶ月の実装期間はスコープに対して攻めすぎとのご懸念が示されております。来週、調整議論のための通話の機会を打診されております。
+
+【返信方針案】
+まずご検討への謝意をお伝えし、こちらからの代替案としてフェーズ分割型の実装アプローチを提示いたします。合わせて来週の通話候補として、火曜日および木曜日の午後をご提案する方向で考えております。
+
+原文抜粋:
+> We've reviewed your proposal and while the technical approach looks solid, we have concerns about the timeline. The three-month implementation window seems aggressive given the scope. Can we schedule a call next week to discuss adjustments?
+
+ご確認・ご助言のほどよろしくお願いいたします。
+
+## NOTES
+
+- 英文引用を改変せずそのまま保持(引用符は markdown blockquote形式を採用)
+- 「call」「timeline」「scope」「availability」は業務用語として原文保持も可だが、フォーマル文書では「通話」「実装期間」「スコープ」「候補時間」への和訳が自然
+- 「phase分割」→「フェーズ分割」(カタカナ表記が日本ビジネス文書で一般的)
+- 「攻めすぎ」は口語。ここでは相手発言の要約であり、本文としては保持可
+- 採点観点: (a) 英文引用の文字単位保持 (b) 要約の要点抽出正確性 (c) 返信方針の論理一貫性

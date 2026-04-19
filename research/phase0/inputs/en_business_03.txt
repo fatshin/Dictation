@@ -1,0 +1,41 @@
+# Benchmark case: en_business_03
+# Task type: en_business
+# Expected difficulty: hard
+# Length (chars): 412 / 528
+
+## INPUT
+
+Hello Mr. Brown, I hope this mail find you well. I am writing for follow up on the proposal which I send to you last week. Our team have discussed internally and we are very interesting in moving forward with the project. However, there is few concerns we like to discuss. First, the delivery timeline seem little tight, specially for the UI part. Second, we are wondering if the pricing can be more flexible depend on the volume. Could you possible arrange a call in next week to discussing these? Best regard.
+
+## EXPECTED
+
+Dear Mr. Brown,
+
+I hope this message finds you well. I am writing to follow up on the proposal I sent to you last week.
+
+Our team has discussed the proposal internally, and we are very interested in moving forward with the project. That said, there are a few points we would like to discuss further.
+
+First, the proposed delivery timeline appears somewhat tight, particularly for the UI workstream. Second, we would like to explore whether the pricing structure could offer greater flexibility depending on order volume.
+
+Would it be possible to arrange a call next week to discuss these matters in more detail?
+
+Thank you for your time, and I look forward to your response.
+
+Best regards,
+
+## NOTES
+
+- Non-native English errors corrected while preserving meaning:
+  - "mail find" → "message finds"
+  - "I send" → "I sent"
+  - "have discussed" → "has discussed" (subject-verb agreement)
+  - "interesting" → "interested"
+  - "there is few concerns" → "there are a few points"
+  - "seem little tight" → "appears somewhat tight"
+  - "specially" → "particularly"
+  - "depend on" → "depending on"
+  - "Could you possible arrange" → "Would it be possible to arrange"
+  - "discussing" → "discuss"
+  - "Best regard" → "Best regards"
+- Tone: politely formal, no over-correction that changes writer's voice
+- Evaluation criteria: (a) grammar correction accuracy (b) semantic preservation (c) natural native-level phrasing without artificial additions

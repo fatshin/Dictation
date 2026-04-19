@@ -1,0 +1,31 @@
+# Benchmark case: jp_en_mix_02
+# Task type: jp_en_mix
+# Expected difficulty: medium
+# Length (chars): 386 / 402
+
+## INPUT
+
+じゃあ今日のweekly sync始めます。えーと、まずONNX RuntimeのベンチなんですけどTTFTが1.5秒出てて、これはtarget SLAの800ms超えてるのでNGです。で、going forwardとしてはquantization深掘りする必要があって、INT4まで落とせばmemory footprintも小さくなるしlatencyも改善するはず。next stepはproduction readiness checkをまず通すこと。あとdependency updateで、PyTorchを2.3から2.5に上げるかって話もあって、breaking changeはなさそうだけどregression testは必要。誰かowner決めたい。あ、Tanaka-sanお願いできます?
+
+## EXPECTED
+
+本日のweekly syncの要点を以下にまとめます。
+
+1. ONNX Runtimeベンチマーク結果
+   - TTFTは1.5秒を計測。target SLAの800msを超過しており現状NG判定。
+   - 対応方針: quantizationの深掘り検討。INT4まで量子化することでmemory footprint削減およびlatency改善が見込まれる。
+   - next step: production readiness checkを通過させることを最優先とする。
+
+2. dependency update
+   - PyTorch 2.3 → 2.5への更新を検討中。breaking changeは想定されないが、regression testは必須。
+   - オーナー: Tanaka氏に担当を依頼。
+
+以上、ご確認のほどよろしくお願いいたします。
+
+## NOTES
+
+- 会議冒頭の口語(「じゃあ〜始めます」「えーと」)を削除
+- 技術用語(TTFT, SLA, quantization, INT4, memory footprint, latency, dependency, regression test, breaking change)は英語維持
+- 「〜するはず」「〜って話」のような曖昧表現を客観記述に変換
+- 「Tanaka-san」は日本語文脈では「Tanaka氏」が自然
+- 採点観点: (a) 技術用語の英語保持率 (b) 議事録構造化 (c) アクションアイテム(オーナー)の明確化

@@ -1,0 +1,19 @@
+# Benchmark case: jp_en_mix_01
+# Task type: jp_en_mix
+# Expected difficulty: easy
+# Length (chars): 156 / 178
+
+## INPUT
+
+昨日のincidentなんだけど、結局原因まだ分かってない。とりあえずroot cause analysisが必要で、今朝朝イチでSREチームと同期した。一旦workaroundは入れたから、productionは落ち着いてるんだけど、postmortem書く必要ある。明日までにドラフト出します。
+
+## EXPECTED
+
+昨日発生したincidentについて、現時点で根本原因は特定できておりません。root cause analysisが必要な状況であり、本日朝一にSREチームと認識を合わせました。既にworkaroundを適用済みのため、productionは安定稼働しております。postmortemの作成が必要となりますので、明日までにドラフトを展開いたします。
+
+## NOTES
+
+- 技術用語(incident, root cause analysis, SRE, workaround, production, postmortem)は英語のまま保持
+- 「同期した」はカジュアルな英語influenced表現 → 「認識を合わせた」に置換
+- 文末を「です・ます」に統一しつつ、技術用語のカタカナ化はしない
+- 採点観点: (a) 英単語の保持(誤って日本語化しない) (b) ビジネス敬体への統一 (c) 意味の保持

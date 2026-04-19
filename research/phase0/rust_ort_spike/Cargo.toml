@@ -1,0 +1,26 @@
+[package]
+name = "ort-spike"
+version = "0.0.1"
+edition = "2021"
+description = "Rust spike to validate ort v2 crate can load and run candidate ONNX models for Dictation Phase 0"
+publish = false
+
+[dependencies]
+# ort v2 is currently pre-release. Pin to 2.0.0-rc.10 for reproducibility.
+# `load-dynamic` defers linking until runtime -> no onnxruntime install required at build time.
+# TODO(Phase 1): add feature flags for platform-specific EPs:
+#   - macOS:   features = ["coreml"]
+#   - Windows: features = ["directml"]
+#   - Linux:   features = ["cuda"] (optional)
+ort = { version = "=2.0.0-rc.10", features = ["load-dynamic", "ndarray"] }
+tokenizers = "0.20"
+ndarray = "0.16"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

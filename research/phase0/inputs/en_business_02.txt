@@ -1,0 +1,38 @@
+# Benchmark case: en_business_02
+# Task type: en_business
+# Expected difficulty: medium
+# Length (chars): 318 / 478
+
+## INPUT
+
+Meeting notes from today:
+- discussed Acme partnership
+- they want 15% discount, we said 8%
+- timeline: 6 weeks for POC
+- concerns about data security, need to loop in legal
+- next steps: send revised proposal by friday
+- Smith handles contract, Jones on technical
+- risk: their internal approval takes 3 weeks
+- we should start integration work in parallel
+
+## EXPECTED
+
+Dear Team,
+
+Following today's meeting regarding the Acme partnership, please find below a summary of the discussion along with the agreed next steps.
+
+Our negotiation on pricing remains open: the counterparty requested a 15 percent discount, whereas our current counter-offer stands at 8 percent. On the technical front, we have aligned on a six-week proof-of-concept timeline. Data security emerged as a notable concern, which will require engagement with our legal team.
+
+The immediate next steps are as follows. I will forward the revised proposal to Acme by Friday. Smith will take ownership of the contract workstream, while Jones will lead the technical track. We should also note that Acme's internal approval process is expected to take approximately three weeks; to mitigate this timeline risk, I recommend initiating integration work in parallel.
+
+Please let me know if you have any questions or additional input.
+
+Best regards,
+
+## NOTES
+
+- Bullet-list meeting notes → fully-formed paragraph email
+- Preserve every data point (15%, 8%, 6 weeks, 3 weeks) and proper nouns (Acme, Smith, Jones)
+- "POC" expanded to "proof-of-concept" for formal register
+- Add discourse structure (context → pricing → technical → risks → next steps)
+- Evaluation criteria: (a) zero information loss (b) paragraph coherence (c) appropriate business register

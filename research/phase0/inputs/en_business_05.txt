@@ -1,0 +1,38 @@
+# Benchmark case: en_business_05
+# Task type: en_business
+# Expected difficulty: medium
+# Length (chars): input 560 / output 640
+
+## INPUT
+
+hey really sorry about the demo yesterday, i know it didnt go the way we hoped. the backend was returning 500s for like 10 minutes and we couldnt figure out why until after the call was done. turns out one of our workers was hitting rate limits on the third party api because we forgot to stagger the retries, so classic mistake. we pushed a fix last night and added better alerting so this shouldnt happen again. happy to do a re-demo whenever works for you guys, or we can just jump on a short call to walk through what we would have shown. let me know what you prefer.
+
+## EXPECTED
+
+Subject: Apology and Follow-up for Yesterday's Demo
+
+Hi [Name],
+
+I want to sincerely apologize for the disruption during yesterday's demo. The backend returned HTTP 500 errors for approximately ten minutes, and we were unable to diagnose the issue until after the session had ended.
+
+The root cause was that one of our workers hit rate limits on a third-party API because we had not staggered our retry logic — a preventable oversight on our side. We deployed a fix last night and have added additional alerting to prevent a recurrence.
+
+I would like to offer two options to make this right:
+
+1. A full re-demo at a time that works for your team.
+2. A brief walkthrough call to cover the material we had planned.
+
+Please let me know which you would prefer, and I will coordinate accordingly.
+
+Thank you for your patience.
+
+Best regards,
+[Your Name]
+
+## NOTES
+
+- フィラー「hey」「like」「you guys」「classic mistake」を除去
+- 謝罪 → 原因 → 対策 → 代替案 → 依頼 の構造化
+- 自己批判の温度感を維持（"preventable oversight on our side"）しつつ過度に卑屈にしない
+- 二択を番号付きリストに
+- Subject 行と署名ブロックを追加（メールとして完結）
