@@ -42,7 +42,7 @@ class BenchResult:
     output_hash: str
     ep_used: str
     run_seq: int
-    timestamp: str = field(default_factory=lambda: _dt.datetime.utcnow().isoformat(timespec="seconds"))
+    timestamp: str = field(default_factory=lambda: _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds"))
 
 
 _SCHEMA = """
@@ -75,9 +75,17 @@ def _sha256(text: str) -> str:
 
 
 def _peak_rss_mb() -> float:
+    """Total RSS of this process + children (ASR sidecar, ORT workers)."""
     import psutil
 
-    return psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024)
+    proc = psutil.Process(os.getpid())
+    total = proc.memory_info().rss
+    for child in proc.children(recursive=True):
+        try:
+            total += child.memory_info().rss
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return total / (1024 * 1024)
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -119,10 +127,23 @@ def store_result(db_path: Path, result: BenchResult) -> None:
         conn.close()
 
 
+def _extract_section(text: str, name: str) -> str:
+    """Pull out a `## {name}` block without leaking EXPECTED / NOTES."""
+    marker = f"## {name}"
+    try:
+        start = text.index(marker) + len(marker)
+    except ValueError as e:
+        raise SystemExit(f"section '{name}' not found in workload") from e
+    rest = text[start:]
+    end = rest.find("\n## ")
+    return (rest[:end] if end >= 0 else rest).strip()
+
+
 def _load_workload(path: Path) -> str:
     if not path.exists():
         raise SystemExit(f"workload missing: {path}")
-    return path.read_text(encoding="utf-8").strip()
+    raw = path.read_text(encoding="utf-8")
+    return _extract_section(raw, "INPUT")
 
 
 def _render_prompt(workload_text: str) -> str:
@@ -140,14 +161,25 @@ def run_bench(
     """Run `warmup + runs` generations and return the `runs` measured results."""
     import onnxruntime_genai as og
 
-    ep_tag = ",".join(select_execution_providers()) + f"|{detect_platform()}"
+    providers = select_execution_providers()
+    ep_tag = ",".join(providers) + f"|{detect_platform()}"
 
     workload_text = _load_workload(workload_path)
     prompt = _render_prompt(workload_text)
     input_hash = _sha256(workload_text)
     workload_id = workload_path.stem
 
-    model = og.Model(str(model_dir))
+    try:
+        config = og.Config(str(model_dir))
+        if hasattr(config, "clear_providers"):
+            config.clear_providers()
+        for ep in providers:
+            if hasattr(config, "append_provider"):
+                config.append_provider(ep)
+        model = og.Model(config)
+    except (AttributeError, TypeError):
+        # Older onnxruntime-genai: no Config API, fall back to default EP
+        model = og.Model(str(model_dir))
     tokenizer = og.Tokenizer(model)
 
     results: list[BenchResult] = []

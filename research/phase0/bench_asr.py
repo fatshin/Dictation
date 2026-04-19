@@ -68,11 +68,15 @@ def _run_whisper_cpp(wav: Path, lang: str | None) -> str:
     binary = _which("whisper-cli") or _which("main")
     if not binary:
         raise SystemExit("whisper.cpp binary (whisper-cli or main) not on PATH")
-    cmd = [binary, "-f", str(wav), "-otxt", "-of", str(wav.with_suffix(""))]
+    # Write hypothesis to results/asr_hyp/<stem>.txt — NEVER next to the wav,
+    # which would overwrite the reference <stem>.txt and corrupt future runs.
+    out_base = RESULTS_DIR / "asr_hyp" / wav.stem
+    out_base.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [binary, "-f", str(wav), "-otxt", "-of", str(out_base)]
     if lang:
         cmd += ["-l", lang]
     subprocess.run(cmd, check=True, capture_output=True, text=True)
-    txt = wav.with_suffix(".txt")
+    txt = out_base.with_suffix(".txt")
     return txt.read_text(encoding="utf-8").strip() if txt.exists() else ""
 
 

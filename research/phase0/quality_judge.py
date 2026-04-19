@@ -38,20 +38,25 @@ TASK_PROMPTS: dict[str, str] = {
     ),
 }
 
+SCHEMA_VERSION = 2
+PROMPT_VERSION = "2026-04-v1"
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS judge_scores (
-    model_id    TEXT NOT NULL,
-    input_hash  TEXT NOT NULL,
-    output_hash TEXT NOT NULL,
-    task_type   TEXT NOT NULL,
-    keigo       REAL NOT NULL,
-    filler      REAL NOT NULL,
-    semantic    REAL NOT NULL,
-    structure   REAL NOT NULL,
-    raw_json    TEXT NOT NULL,
-    judge_model TEXT NOT NULL,
-    timestamp   TEXT NOT NULL,
-    PRIMARY KEY (model_id, input_hash, output_hash)
+    model_id        TEXT NOT NULL,
+    input_hash      TEXT NOT NULL,
+    output_hash     TEXT NOT NULL,
+    task_type       TEXT NOT NULL,
+    keigo           REAL NOT NULL,
+    filler          REAL NOT NULL,
+    semantic        REAL NOT NULL,
+    structure       REAL NOT NULL,
+    raw_json        TEXT NOT NULL,
+    judge_model     TEXT NOT NULL,
+    prompt_version  TEXT NOT NULL,
+    schema_version  INTEGER NOT NULL,
+    timestamp       TEXT NOT NULL,
+    PRIMARY KEY (model_id, input_hash, output_hash, judge_model, prompt_version, schema_version)
 );
 """
 
@@ -87,8 +92,9 @@ def _cache_get(
 ) -> dict | None:
     cur = conn.execute(
         "SELECT keigo, filler, semantic, structure, raw_json FROM judge_scores "
-        "WHERE model_id=? AND input_hash=? AND output_hash=?",
-        (model_id, input_hash, output_hash),
+        "WHERE model_id=? AND input_hash=? AND output_hash=? "
+        "AND judge_model=? AND prompt_version=? AND schema_version=?",
+        (model_id, input_hash, output_hash, JUDGE_MODEL, PROMPT_VERSION, SCHEMA_VERSION),
     )
     row = cur.fetchone()
     if not row:
@@ -104,11 +110,13 @@ def _cache_put(
     task_type: str,
     scores: JudgeScores,
 ) -> None:
+    # INSERT OR IGNORE: never overwrite a prior scoring for the same
+    # (model, input, output, judge, prompt, schema) tuple.
     conn.execute(
-        """INSERT OR REPLACE INTO judge_scores
+        """INSERT OR IGNORE INTO judge_scores
            (model_id, input_hash, output_hash, task_type, keigo, filler, semantic, structure,
-            raw_json, judge_model, timestamp)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            raw_json, judge_model, prompt_version, schema_version, timestamp)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             model_id,
             input_hash,
@@ -120,7 +128,9 @@ def _cache_put(
             scores.structure,
             scores.raw_json,
             JUDGE_MODEL,
-            _dt.datetime.utcnow().isoformat(timespec="seconds"),
+            PROMPT_VERSION,
+            SCHEMA_VERSION,
+            _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds"),
         ),
     )
     conn.commit()
@@ -182,11 +192,24 @@ def _infer_task_type(workload_id: str) -> str:
     raise SystemExit(f"cannot infer task_type from workload_id={workload_id}")
 
 
+def _extract_section(text: str, name: str) -> str:
+    marker = f"## {name}"
+    try:
+        start = text.index(marker) + len(marker)
+    except ValueError as e:
+        raise SystemExit(f"section '{name}' not found") from e
+    rest = text[start:]
+    end = rest.find("\n## ")
+    return (rest[:end] if end >= 0 else rest).strip()
+
+
 def _load_input_text(workload_id: str) -> str:
+    """Return only the `## INPUT` section so EXPECTED/NOTES never leak to judge."""
     candidate = REPO_ROOT / "inputs" / f"{workload_id}.txt"
     if not candidate.exists():
         raise SystemExit(f"input file missing: {candidate}")
-    return candidate.read_text(encoding="utf-8").strip()
+    raw = candidate.read_text(encoding="utf-8")
+    return _extract_section(raw, "INPUT")
 
 
 def judge_from_db(bench_db: Path, cache_db: Path, limit: int | None = None) -> list[dict]:

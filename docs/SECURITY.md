@@ -35,6 +35,8 @@ Local-first dictation handles sensitive material: meetings, medical notes, legal
 
 ## Network posture
 
+The network-posture story applies to the distributed binary. The Python scripts under `research/phase0/` are a development harness: they download models from HuggingFace and call external judges (Anthropic) during PoC evaluation. None of those dependencies enter the shipped Rust binary. The audit guarantees below cover the app the user actually installs.
+
 Two build profiles to keep the audit story honest:
 
 - **Audit build** (`cargo build --no-default-features`): no `reqwest`, no HTTP client, no downloader module. Compiles and runs against a pre-installed models directory. Used by anyone who wants to verify "no network code" from source.

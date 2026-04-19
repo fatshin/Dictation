@@ -12,7 +12,7 @@ publish = false
 #   - macOS:   features = ["coreml"]
 #   - Windows: features = ["directml"]
 #   - Linux:   features = ["cuda"] (optional)
-ort = { version = "=2.0.0-rc.10", features = ["load-dynamic", "ndarray"] }
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "load-dynamic", "ndarray"] }
 tokenizers = "0.20"
 ndarray = "0.16"
 anyhow = "1"

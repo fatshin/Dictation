@@ -83,7 +83,7 @@ Directory: `research/phase0/`
 research/phase0/
 ├── bench_llm.py          # TTFT / tokens-per-second / quality per model × workload
 ├── bench_asr.py          # WER on 20 utterances (JP/EN/mixed)
-├── bench_e2e.py          # two-stage vs one-stage comparison
+├── bench_e2e.py          # two-stage vs one-stage comparison (optional; deferred to Phase 1 if Gemma 4 audio-native ONNX is not ready in the timeframe)
 ├── quality_judge.py      # LLM-as-judge with on-disk cache
 ├── models.py             # download + SHA-256 verify
 ├── runtime_selector.py   # EP selection (Mac CoreML / Win DML / Win QNN / Win OV)

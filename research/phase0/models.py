@@ -24,7 +24,11 @@ TIER_2: dict[str, str] = {
 }
 
 BACKUP: dict[str, str] = {
-    "gemma-3n-e4b": "onnx-community/gemma-3n-E4B-it-ONNX",
+    # Prior-generation backup. The onnx-community ONNX repo is gated (401 on
+    # anonymous API) at the time of writing, and the Google weights repo ships
+    # safetensors, not ONNX. If promoted to Tier 1, plan for either gaining
+    # access to the gated ONNX repo or converting the Google weights ourselves.
+    "gemma-3n-e4b": "google/gemma-3n-E4B-it",
 }
 
 ALL_MODELS: dict[str, str] = {**TIER_1, **TIER_2, **BACKUP}
@@ -88,11 +92,13 @@ def download(repo_id: str, local_dir: Path, revision: str | None = None) -> Path
     from huggingface_hub import snapshot_download
 
     local_dir.mkdir(parents=True, exist_ok=True)
+    # `local_dir_use_symlinks=False` was deprecated in huggingface_hub 0.23
+    # and removed in later releases; specifying `local_dir` alone now copies
+    # files directly without symlinks.
     path = snapshot_download(
         repo_id=repo_id,
         local_dir=str(local_dir),
         revision=revision,
-        local_dir_use_symlinks=False,
     )
     return Path(path)
 
