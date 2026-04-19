@@ -20,6 +20,8 @@ Local-first dictation handles sensitive material: meetings, medical notes, legal
 
 ## Encryption at rest
 
+**Scope**: protects the database from lost-laptop / offline-disk attacks and from other local users. **Not in scope**: same-user malware running with the logged-in user's privileges — once malware can impersonate the user, it can ask the OS keystore for the key and the app will decrypt as normal. Secure Enclave / TPM raise the cost of that attack but do not eliminate it.
+
 - **SQLCipher 4.x**, with:
   - `cipher_page_size = 4096`
   - `kdf_iter ≥ 256000` (PBKDF2-HMAC-SHA512)
@@ -27,13 +29,20 @@ Local-first dictation handles sensitive material: meetings, medical notes, legal
   - `PRAGMA temp_store = MEMORY`
   - Integrity check on open
 - The database key is **not** stored as a user password. On first launch we generate a 32-byte random key and store it in:
-  - macOS: Keychain item with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, wrapped via a Secure Enclave P-256 key (biometry-gated where available)
+  - macOS: Keychain item with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, wrapped via a Secure Enclave P-256 key when available (biometry-gated optional mode)
   - Windows: DPAPI with TPM-backed `NCrypt` key when the device has TPM 2.0
 - The raw key never lives on disk in plaintext and never leaves process memory as a `String`.
 
 ## Network posture
 
-Default build has **no HTTP client**. The `reqwest` crate is feature-gated:
+Two build profiles to keep the audit story honest:
+
+- **Audit build** (`cargo build --no-default-features`): no `reqwest`, no HTTP client, no downloader module. Compiles and runs against a pre-installed models directory. Used by anyone who wants to verify "no network code" from source.
+- **Release build** (default features, what ships in the DMG/MSIX): includes the downloader module because models aren't bundled. The downloader has its own allowlist limited to model-host domains and is only invoked on explicit user action ("Download model X"). Once models are installed, dictation operation runs with zero egress — verifiable with `nettop` (macOS) or Resource Monitor (Windows).
+
+CI asserts that `cargo tree --edges normal --no-default-features` does not include `reqwest`, so a future regression can't quietly re-introduce HTTP in the audit build.
+
+The `reqwest` crate is feature-gated:
 
 ```toml
 [dependencies]
@@ -48,7 +57,7 @@ The model-downloader module is the only code path that pulls in `reqwest`, and i
 Tauri capabilities:
 
 - `http:default` → **not granted**
-- `shell:allow-execute` → scoped to specific sidecar paths only
+- Shell access uses Tauri v2 sidecar permissions scoped to exact binaries (`whisperkit-cli-*`, `sherpa-onnx-*`). Arbitrary `shell:allow-execute` is **not** granted; argv is validated against a small list of known-safe arguments before the sidecar is spawned.
 
 Runtime verification:
 

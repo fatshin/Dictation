@@ -1,5 +1,7 @@
 # Dictation
 
+[日本語版 README はこちら](README.ja.md)
+
 **Free, local-first AI dictation app. Your voice never leaves your machine.**
 
 Cross-platform (macOS + Windows) voice dictation tool with on-device speech recognition and local LLM post-processing. Built for people who handle sensitive material — meetings, medical notes, legal drafts, internal communications — where sending audio to third-party clouds is not an option.
@@ -54,7 +56,8 @@ This project targets the gap: **auditable source code + fully offline + Japanese
 |---|---|---|
 | UI shell | Tauri 2 | Small bundle, Rust backend, cross-platform |
 | Frontend | React + TypeScript + Zustand | Widely known, fast iteration |
-| LLM runtime | ONNX Runtime GenAI (`ort` crate) | NPU support on Win (QNN/OpenVINO/DirectML), CoreML on Mac, single model format |
+| LLM runtime (Phase 0) | `onnxruntime_genai` Python + ONNX Runtime smoke tests | Fast iteration; establishes latency budget |
+| LLM runtime (Phase 1+) | `ort` crate v2 + manual KV-cache loop (or C API FFI fallback) | Rust backend for production; gated on Phase 0 viability |
 | ASR (macOS) | WhisperKit (Swift sidecar) | Apple Neural Engine acceleration |
 | ASR (Windows) | sherpa-onnx | QNN/DirectML EP, Whisper large-v3-turbo ONNX |
 | Encryption | SQLCipher + Keychain/Secure Enclave (Mac), DPAPI + TPM (Win) | OS-native key storage |
@@ -68,12 +71,12 @@ All models are small (≤4B parameters) and quantized to INT4 ONNX so they run o
 
 | Model | Size | License | Notes |
 |---|---|---|---|
-| Gemma 4 E4B | 4B | Gemma Terms of Use | Native audio input capability; license requires review before bundling |
-| Gemma 4 E2B | 2B | Gemma Terms of Use | Lightweight variant |
-| Phi-4-mini-instruct | 3.8B | MIT | First-class NPU variants (QNN / OpenVINO / Ryzen AI) |
-| SmolLM3-3B | 3B | Apache 2.0 | 128K context for long summarization |
+| Gemma 4 E4B | 4.5B effective | Apache 2.0 | Native audio input (audio_encoder_q4.onnx shipped), 128K context |
+| Gemma 4 E2B | 2B effective | Apache 2.0 | Lightweight variant |
+| Phi-4-mini-instruct | 3.8B | MIT | CPU/GPU INT4 RTN variants; strong English + Japanese |
+| Qwen3 4B Instruct 2507 | 4B | Apache 2.0 (to verify on model card) | Strong multilingual including Japanese |
 | Llama 3.2 3B | 3B | Llama 3.2 License | Fallback, Meta-quantized ONNX available |
-| Qwen3 4B | 4B | Apache 2.0 | OpenVINO NPU reference path |
+| SmolLM3-3B | 3B | Apache 2.0 | **English + 5 EU languages only — not for Japanese**. Fallback for English-only long-form summarization |
 
 Model files are downloaded on first run; none are embedded in the binary.
 

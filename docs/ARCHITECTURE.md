@@ -37,6 +37,22 @@
 └───────────────────────────────────────────────────────────────┘
 ```
 
+## ASR sidecar wire protocol
+
+Both Mac (WhisperKit CLI) and Win (sherpa-onnx) run as child processes and communicate over stdio using JSONL (newline-delimited JSON). This keeps the security boundary clean — no localhost sockets, no network policy conflict — and lets either sidecar crash independently without taking the app down.
+
+Frame shapes (simplified):
+
+```json
+{"type":"start","session_id":"...","sample_rate":16000,"language":"ja"}
+{"type":"pcm","seq":1,"data_b64":"..."}
+{"type":"partial","text":"...","start_ms":0,"end_ms":1200}
+{"type":"final","segments":[{"start_ms":0,"end_ms":3200,"text":"..."}]}
+{"type":"error","code":"ASR_CRASH","message":"..."}
+```
+
+The Rust side owns the supervisor loop: spawn, monitor stdout, restart on exit, surface `AsrEvent::Crashed { reason }` to the UI when restart limit is hit. Audio capture never blocks on sidecar state — the `rtrb` ring buffer continues filling while the supervisor is reconnecting.
+
 ## Key trait boundaries (Rust)
 
 ```rust
@@ -123,7 +139,14 @@ Events flow Rust → frontend only:
 
 ## ONNX Runtime GenAI integration
 
-Crate: `ort` (v2). `ort-genai` Rust binding is still maturing, so generation is implemented as a manual KV-cache loop on top of `ort`.
+**Phase 0**: `onnxruntime_genai` Python + ONNX Runtime smoke tests on each candidate. Python is chosen for speed of iteration — Phase 0 is about latency budget and quality ranking, not the production runtime.
+
+**Phase 1 gate**: Before committing to the Rust backend for production, we verify that `ort` crate v2 can tokenize → prefill → decode 32 tokens on the chosen model. `onnxruntime-genai` has no official Rust binding (C/C++/C#/Java/Python only), so the Rust path is either:
+
+1. `ort` v2 + manual KV-cache loop (primary), or
+2. A thin FFI wrapper over the C API of `onnxruntime-genai` (fallback if (1) hits wall).
+
+If neither works on the primary model at Phase 1 gate, fall back to `llama.cpp` + GGUF for the LLM layer. ASR is unaffected.
 
 ```rust
 pub struct OnnxGenRuntime {

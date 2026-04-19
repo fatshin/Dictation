@@ -12,14 +12,20 @@ Resolve three unknowns:
 
 ## Go / No-Go criteria
 
-| Metric | Hard line | Target | Notes |
-|---|---|---|---|
-| TTFT (first-token latency) | < 2500 ms | < 1500 ms | Measured from audio-stop to first visible token |
-| LLM-as-judge quality (4-axis avg / 10) | ≥ 7.0 | ≥ 7.5 | keigo / filler / semantic / structure |
-| Japanese WER | < 15 % | < 10 % | On the 20-utterance benchmark set |
-| Peak RAM | < 8 GB | < 6 GB | Steady-state while dictating |
+All latency metrics are split so the blame can land on the right subsystem.
 
-No-Go if any line slips below the hard line or fewer than two Tier 1 models clear all lines.
+| Metric | Hard line | Target | Defined as |
+|---|---|---|---|
+| ASR final latency | < 800 ms | < 500 ms | audio_stop → asr_final emit |
+| Rewrite TTFT | < 1500 ms | < 800 ms | rewrite_start → first LLM token |
+| End-to-end TTFT | < 2500 ms | < 1500 ms | audio_stop → first visible token in target app |
+| LLM-as-judge quality (4-axis avg / 10) | ≥ 7.0 | ≥ 7.5 | keigo / filler / semantic / structure |
+| Japanese CER | < 10 % | < 7 % | character-level, Japanese-only utterances |
+| Mixed-term preservation rate | ≥ 95 % | ≥ 98 % | technical terms retained verbatim in JP/EN mixed utterances |
+| English WER | < 10 % | < 7 % | English-only utterances |
+| Peak RAM (total: Tauri + ASR sidecar + LLM) | < 8 GB | < 6 GB | Steady-state while dictating |
+
+No-Go if any hard line slips or fewer than two Tier 1 models clear all lines.
 
 ## Benchmark workloads
 
@@ -57,16 +63,17 @@ Quality judging uses a fixed prompt, `temperature=0`, and a cache keyed on `(mod
 
 ## Candidate models
 
-| Tier | Model | HF repo (candidate) | INT4 size | License |
+| Tier | Model | HF repo (verified 2026-04-19) | INT4 size | License |
 |---|---|---|---|---|
-| 1 | Gemma 4 E4B | `onnx-community/gemma-4-e4b-it-ONNX` | ~2.8 GB | Gemma TOU |
-| 1 | Gemma 4 E2B | `onnx-community/gemma-4-e2b-it-ONNX` | ~1.4 GB | Gemma TOU |
+| 1 | Gemma 4 E4B | `onnx-community/gemma-4-E4B-it-ONNX` | ~2.8 GB | Apache 2.0 (subject to Gemma Prohibited Use Policy) |
+| 1 | Gemma 4 E2B | `onnx-community/gemma-4-E2B-it-ONNX` | ~1.4 GB | Apache 2.0 (same policy) |
 | 1 | Phi-4-mini-instruct | `microsoft/Phi-4-mini-instruct-onnx` | ~2.2 GB | MIT |
-| 1 | SmolLM3-3B | `HuggingFaceTB/SmolLM3-3B-Instruct-ONNX` | ~2.0 GB | Apache 2.0 |
+| 1 | Qwen3 4B Instruct 2507 | `onnx-community/Qwen3-4B-Instruct-2507-ONNX` | ~2.5 GB | verify on model card |
 | 2 | Llama 3.2 3B | `onnx-community/Llama-3.2-3B-Instruct-ONNX` | ~2.0 GB | Llama 3.2 |
-| 2 | Qwen3 4B | `Qwen/Qwen3-4B-Instruct-ONNX` | ~2.5 GB | Apache 2.0 |
+| 2 | SmolLM3-3B | `HuggingFaceTB/SmolLM3-3B-ONNX` | ~2.0 GB | Apache 2.0 (English + 5 EU languages only; **not for Japanese**) |
+| Backup | Gemma 3n E4B | `google/gemma-3n-E4B-it` | ~2.8 GB | Gemma Terms | insurance if Gemma 4 path hits any blocker |
 
-Exact repo names and ONNX availability are verified on Day 1 AM before the rest of the plan runs.
+Existence verified via HF API on 2026-04-19. Exact revision, file layout, and `genai_config.json` presence are re-verified on Day 1 AM before the rest of the plan runs.
 
 ## Implementation
 
@@ -126,17 +133,19 @@ def select_execution_provider() -> list[str]:
 
 ## Schedule
 
+Spread to avoid the known trap of "benchmark everything on day 2". Day 2 is deliberately a smoke pass that narrows the field before the expensive runs.
+
 | Day | Work | Gate |
 |---|---|---|
-| 1 AM | Verify HF ONNX repos exist for every Tier 1 candidate | If Gemma 4 ONNX is missing, promote Tier 2 immediately |
-| 1 PM | Download all models, SHA-256 verify | |
-| 2 | Implement `bench_llm.py`, run Tier 1 × Japanese keigo workload | Early TTFT signal |
-| 3 | Run Tier 1 × remaining 3 workloads | `bench_db.sqlite` complete |
-| 4 AM | Implement `bench_asr.py`, run on macOS | |
-| 4 PM | Run ASR bench on Windows (fallback: whisper.cpp if no native sidecar yet) | WER fixed |
-| 5 | Judge all outputs, aggregate, write `results/report.md` v1 | Draft verdict |
-| 6 | Cross-review (multi-model sanity check) | Critical issues resolved |
-| 7 | Phase 1 Go/No-Go report | Decision |
+| 1 AM | For each Tier 1 candidate: confirm exact HF repo, license file, pinned revision, `genai_config.json` presence, file layout. Table the findings. | If Gemma 4 ONNX is structurally missing, promote Tier 2 immediately |
+| 1 PM | Download all Tier 1 models, SHA-256 verify. Run a 32-token smoke decode on CPU EP for each. | All candidates can decode; dead ones dropped |
+| 2 | `bench_llm.py` v1. For each Tier 1 model: run smoke set = keigo 1–2 samples + English business 1 sample. Rank by TTFT + quick judge score. | Top 2 identified |
+| 3 | Top 2 only × all 4 workloads, full run. Bottom half gets a light pass to confirm the ranking. | `bench_db.sqlite` complete for top 2 |
+| 4 AM | `bench_asr.py` on macOS (WhisperKit sidecar). | JP/EN/mixed WER+CER baseline |
+| 4 PM | ASR bench on Windows. If no native sidecar yet: whisper.cpp. | Cross-platform WER baseline fixed |
+| 5 | Run `quality_judge.py` over all outputs, aggregate, draft `results/report.md` v1. | Draft verdict in writing |
+| 6 | Cross-review (Codex + Gemini + this author). Re-measure anything flagged. | CRITICAL count = 0 |
+| 7 | Phase 1 Go/No-Go report, decision recorded in repo. | Decision |
 
 ## Risk and fallback
 
@@ -159,6 +168,16 @@ All of:
 
 If conditions fail:
 
-- Quality shortfall → improve prompt, try few-shot, retry. If still failing, add Tier 2 (Qwen3 4B).
+- Quality shortfall → improve prompt, try few-shot, retry. If still failing, promote a Tier 2 model.
 - TTFT shortfall → go one size down (E4B → E2B, 3B → 1.5B). INT4 → INT8 is a trap; don't.
-- Runtime shortfall → switch to `llama.cpp` + GGUF as an emergency Phase 0.5.
+- Runtime shortfall → **Phase 0 is No-Go**, not a fallback. Switching to `llama.cpp` + GGUF invalidates the `trait LlmRuntime` / `ort::Session` / ONNX MANIFEST design and is a full architecture redo. Call a re-design meeting before moving on.
+
+## Phase 1 runtime risk (separate gate)
+
+Phase 0 benchmarks the candidate models using **Python** `onnxruntime_genai`. The Phase 1 production runtime uses **Rust** `ort` crate v2 with a manual KV-cache loop (no official Rust binding for `onnxruntime-genai` exists). The two are not the same binary and the Python results do not perfectly predict Rust performance.
+
+To de-risk:
+
+- Day 1 Lane C: prototype a Rust `ort` v2 spike (`research/phase0/rust_ort_spike/`) — load one chosen model, run one forward pass, measure TTFT. Does not need to be production-quality.
+- Expect Rust manual KV-cache loop to give 10–30 % lower tokens/sec than Python `onnxruntime_genai` on the same hardware. Phase 0 Go decision should bake in a 0.7× safety margin on the Python numbers.
+- If the Rust spike on Day 1 is >50 % slower than Python, extend Phase 0 by 2–3 days to implement the C API FFI fallback, or acknowledge Rust backend risk and set a Phase 1 Week 1 "runtime-prototype gate" as an explicit No-Go retrigger.

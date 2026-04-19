@@ -20,18 +20,28 @@ Hard lines:
 
 Full plan: [PHASE0_POC.md](PHASE0_POC.md).
 
-## Phase 1 — MVP (2–3 weeks)
+## Phase 1 — MVP
 
-Runs end-to-end on the developer's machine.
+Runs end-to-end on the developer's machine. Split into two sub-phases to de-risk cross-platform work. Honest estimate for one person: 6–8 weeks.
+
+### Phase 1a — macOS-first MVP (4 weeks)
 
 - Tauri 2 shell with three-window layout
-- ASR integration (macOS sidecar + Windows sidecar)
+- macOS ASR integration (WhisperKit sidecar)
 - LLM rewrite pipeline with 3 templates: rewrite / summarize / translate
-- SQLCipher-backed history
+- SQLCipher-backed history on macOS keystore
 - Global hotkey + cursor-position text injection
 - Network-guard verification (`nettop` shows zero egress)
 - Consent UI before first recording
-- macOS and Windows local builds (unsigned)
+- macOS local builds (unsigned)
+
+### Phase 1b — Windows parity (3 weeks)
+
+- Windows ASR integration (sherpa-onnx sidecar)
+- Windows keystore integration (DPAPI + TPM)
+- Windows text injection (UI Automation)
+- Windows local builds (unsigned)
+- Cross-platform regression pass
 
 No distribution yet. No public release.
 
