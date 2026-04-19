@@ -64,7 +64,9 @@ def load_asr_report(path: Path) -> dict | None:
 def summarize(results: list[dict], judge: dict[tuple[str, str, str], dict]) -> list[ModelSummary]:
     by_model: dict[str, list[dict]] = {}
     for r in results:
-        by_model.setdefault(r["model_id"], []).append(r)
+        # Post Day-2.5: `model_alias` is canonical. Older DBs with `model_id`
+        # are quarantined to `bench_db.invalid_*.sqlite` and not read here.
+        by_model.setdefault(r["model_alias"], []).append(r)
 
     summaries: list[ModelSummary] = []
     for model_id, rs in by_model.items():
@@ -193,10 +195,13 @@ def render_markdown(summaries: list[ModelSummary], asr: dict | None) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Aggregate Phase 0 bench + judge results")
-    parser.add_argument("--bench-db", default="results/bench_db.sqlite")
-    parser.add_argument("--judge-db", default="results/judge_cache.sqlite")
-    parser.add_argument("--asr-report", default="results/asr_report.json")
-    parser.add_argument("--out", default="results/report.md")
+    # Anchor defaults to the phase0 repo root so `aggregate.py` is safe to run
+    # from any cwd (Day 2.5 fix).
+    repo_root = Path(__file__).resolve().parent
+    parser.add_argument("--bench-db", default=str(repo_root / "results/bench_db.sqlite"))
+    parser.add_argument("--judge-db", default=str(repo_root / "results/judge_cache.sqlite"))
+    parser.add_argument("--asr-report", default=str(repo_root / "results/asr_report.json"))
+    parser.add_argument("--out", default=str(repo_root / "results/report.md"))
     args = parser.parse_args()
 
     results = load_bench(Path(args.bench_db))

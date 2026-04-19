@@ -140,12 +140,83 @@ Spread to avoid the known trap of "benchmark everything on day 2". Day 2 is deli
 | 1 AM | For each Tier 1 candidate: confirm exact HF repo, license file, pinned revision, `genai_config.json` presence, file layout. Table the findings. | If Gemma 4 ONNX is structurally missing, promote Tier 2 immediately |
 | 1 PM | Download all Tier 1 models, SHA-256 verify. Run a 32-token smoke decode on CPU EP for each. | All candidates can decode; dead ones dropped |
 | 2 | `bench_llm.py` v1. For each Tier 1 model: run smoke set = keigo 1–2 samples + English business 1 sample. Rank by TTFT + quick judge score. | Top 2 identified |
+| **2.5** | **Pre-Day-3 corrections (see below). Fix data-integrity bugs caught in Day-2 cross-review before running expensive Day-3 bench.** | **CRITICAL/HIGH count = 0 before Day 3** |
 | 3 | Top 2 only × all 4 workloads, full run. Bottom half gets a light pass to confirm the ranking. | `bench_db.sqlite` complete for top 2 |
 | 4 AM | `bench_asr.py` on macOS (WhisperKit sidecar). | JP/EN/mixed WER+CER baseline |
 | 4 PM | ASR bench on Windows. If no native sidecar yet: whisper.cpp. | Cross-platform WER baseline fixed |
 | 5 | Run `quality_judge.py` over all outputs, aggregate, draft `results/report.md` v1. | Draft verdict in writing |
 | 6 | Cross-review (Codex + Gemini + this author). Re-measure anything flagged. | CRITICAL count = 0 |
 | 7 | Phase 1 Go/No-Go report, decision recorded in repo. | Decision |
+
+### Day 2.5 — corrections (added 2026-04-20)
+
+Day-2 cross-review (advisor + Codex + Gemini) flagged issues that would poison
+Day 3's larger dataset if left in place. Fix before any further bench runs.
+
+**CRITICAL (must fix before Day 3)**
+
+1. **Prompt template is language-blind.** `DEFAULT_PROMPT_TEMPLATE` does not
+   instruct the model to preserve the input language or use Japanese polite
+   form. Phi-4-mini emitted English for Japanese inputs in Day 2. Judging
+   those outputs would score prompt failure, not model quality. → Add explicit
+   "keep input language; use 敬体 for Japanese" directive, per-workload.
+2. **`model_id` mislabeled.** `bench_llm.py:288` uses `p.name` when a bare
+   path is passed, so all 10 Day-2 rows are stamped
+   `cpu-int4-rtn-block-32-acc-level-4` instead of `phi-4-mini`. → Split into
+   `model_alias` / `model_variant` / `model_repo` / `model_revision` columns;
+   require alias lookup, fall back to `--label` only with explicit opt-in.
+3. **`INSERT OR REPLACE` is not audit-safe.** Silently overwrites prior
+   `(model_id, workload_id, run_seq)` rows. → Switch to append-only with
+   `bench_session_id` (UUID per run) + drop `UNIQUE` constraint.
+4. **Existing 10 rows are gate-ineligible.** Quarantine as
+   `results/bench_db.invalid_YYYYMMDD.sqlite` with reason recorded; do
+   **not** `UPDATE`-migrate. Re-bench Phi-4-mini with the fixed schema.
+
+**HIGH (fix in the same pass)**
+
+5. **`ep_used` records what was *requested*, not what *ran*.** CoreML fallback
+   to CPU is invisible. → Split into `ep_requested` / `ep_actual` /
+   `ep_fallback BOOLEAN` / `ep_fallback_reason`. Use a verbose-log probe or
+   per-EP try/except to detect actual provider (no stable
+   `onnxruntime-genai` API to query EP post-construction as of 2026-04).
+6. **Judge has no retry.** Use Anthropic SDK's built-in `max_retries`
+   (default 2, bump to 5) and `timeout` — **do not** add `tenacity`;
+   SDK-native is the documented path.
+7. **Peak-RAM sampler misses prefill.** Prefill is a single
+   `append_tokens` call and the RAM peak there is unobserved. → Run a
+   background sampler thread at ~50 ms cadence for the whole bench window;
+   stop on generation end.
+8. **No `model_manifest.json`.** Phi-4-mini revision/hash is not audited.
+   → Regenerate manifest as part of re-bench.
+
+**MEDIUM (fix opportunistically)**
+
+9. `aggregate.py` default paths are cwd-relative → anchor to `REPO_ROOT`.
+10. ASR engine smoke required before corpus work: `whisperkit-cli` and
+    `whisper-cli` are not on PATH in the current env. Install or document.
+11. Add unit tests for pure functions before (not after) the schema change:
+    `_extract_section`, `_percentile`, `_infer_lang`, `_infer_task_type`.
+
+**LOW (track for Phase 1)**
+
+12. `--label` alone lets humans enter arbitrary strings. Prefer structured
+    columns (alias / variant / repo / revision / manifest_hash).
+13. ASR corpus source is a user decision, not an autonomous step
+    (licensing / privacy). Candidates: self-recorded, CSJ excerpts, public
+    domain. Record the decision in the repo before recording.
+
+**Sequenced execution**
+
+```
+1. schema + label + EP-provenance + append-only + retry + prompt → code only
+2. quarantine results/bench_db.sqlite → bench_db.invalid_20260420.sqlite
+3. re-bench Phi-4-mini small (1 JP + 1 EN) → eyeball JP output is Japanese
+4. judge smoke on step 3 (5-10 API calls, confirm retry path works)
+5. background: download Gemma-4-E2B + Qwen3-4B (with manifest)
+6. Tier-1 full bench, full judge, aggregate
+7. ASR engine install → corpus decision → ASR bench
+8. Day-6/7 gate
+```
 
 ## Risk and fallback
 

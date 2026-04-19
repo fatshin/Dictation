@@ -146,13 +146,18 @@ def _extract_json(text: str) -> dict:
 
 
 def judge(input_text: str, output_text: str, task_type: str) -> dict:
-    """Call the Claude Opus 4.7 judge and return per-axis scores."""
+    """Call the Claude Opus 4.7 judge and return per-axis scores.
+
+    Uses Anthropic SDK's built-in retry (exp backoff on 429/5xx). Bumped from
+    the default 2 to 5 since batch judge runs can be long and a single retry
+    window isn't always enough for sustained rate-limit responses.
+    """
     import anthropic
 
     if task_type not in TASK_PROMPTS:
         raise SystemExit(f"unknown task_type: {task_type}")
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(max_retries=5, timeout=60.0)
     user = (
         f"Task: {TASK_PROMPTS[task_type]}\n\n"
         f"INPUT (raw dictation):\n{input_text}\n\n"
@@ -219,12 +224,14 @@ def judge_from_db(bench_db: Path, cache_db: Path, limit: int | None = None) -> l
     records: list[dict] = []
     try:
         q = (
-            "SELECT DISTINCT model_id, workload_id, input_hash, output_hash, completion_text "
+            "SELECT DISTINCT model_alias, workload_id, input_hash, output_hash, completion_text "
             "FROM bench_runs"
         )
         if limit is not None:
             q += f" LIMIT {int(limit)}"
         for row in conn_bench.execute(q):
+            # `model_alias` is the bench_runs column; `model_id` is retained
+            # as the judge_scores cache-key field name.
             model_id, workload_id, input_hash, output_hash, completion = row
             cached = _cache_get(conn_cache, model_id, input_hash, output_hash)
             if cached:

@@ -1,0 +1,1 @@
+Quarantined. Rationale: all 10 rows carry model_id='cpu-int4-rtn-block-32-acc-level-4' (subdir name) instead of alias 'phi-4-mini'. No judge run on these rows. Re-bench with fixed schema per Day 2.5 plan.
