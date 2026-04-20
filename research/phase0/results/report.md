@@ -19,9 +19,9 @@
 
 | Model | Runs | TTFT p50 (ms) | TTFT p95 (ms) | tok/s p50 | Quality avg | Peak RAM (MB) | Verdict |
 |---|---|---|---|---|---|---|---|
-| llama-3.2-3b-genai | 2 | 1678 | 1716 | 16.6 | 0.00 | 2170 | **FAIL** |
-| phi-3.5-mini | 2 | 3940 | 3993 | 10.1 | 0.00 | 3219 | **FAIL** |
+| llama-3.2-3b-genai | 92 | 2445 | 12858 | 18.8 | 0.00 | 4863 | **FAIL** |
 | phi-4-mini | 92 | 2851 | 17934 | 15.6 | 0.00 | 6121 | **FAIL** |
+| phi-3.5-mini | 92 | 7376 | 42189 | 10.3 | 0.00 | 9850 | **FAIL** |
 
 Models passing per-model hard lines: 0
 ASR hard line: FAIL
