@@ -9,13 +9,19 @@
 
 ## ASR
 
-**No ASR report found.** Run `bench_asr.py` before the Phase 0 gate.
+- Engine: whisper.cpp
+- Platform: macos-arm64
+- Utterances: 6
+- CER avg: 29.93 % FAIL
+- WER avg: 84.68 %
 
 ## Per-model summary
 
 | Model | Runs | TTFT p50 (ms) | TTFT p95 (ms) | tok/s p50 | Quality avg | Peak RAM (MB) | Verdict |
 |---|---|---|---|---|---|---|---|
-| cpu-int4-rtn-block-32-acc-level-4 | 10 | 752 | 1851 | 16.3 | 0.00 | 2985 | **FAIL** |
+| llama-3.2-3b-genai | 2 | 1678 | 1716 | 16.6 | 0.00 | 2170 | **FAIL** |
+| phi-3.5-mini | 2 | 3940 | 3993 | 10.1 | 0.00 | 3219 | **FAIL** |
+| phi-4-mini | 92 | 2851 | 17934 | 15.6 | 0.00 | 6121 | **FAIL** |
 
 Models passing per-model hard lines: 0
 ASR hard line: FAIL

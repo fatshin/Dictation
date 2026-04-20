@@ -12,15 +12,27 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 TIER_1: dict[str, str] = {
-    "gemma-4-e4b": "onnx-community/gemma-4-E4B-it-ONNX",
-    "gemma-4-e2b": "onnx-community/gemma-4-E2B-it-ONNX",
+    # Day-2.5 pivot: the onnx-community Gemma-4 / Qwen3 ONNX repos ship
+    # Optimum-style exports WITHOUT genai_config.json, so onnxruntime-genai
+    # cannot load them. Kept in a quarantine dict below for reference. The
+    # active Tier 1 is now Phi-family + Llama-3.2, all of which ship
+    # GenAI-ready cpu_and_mobile/cpu-int4-rtn-block-32-acc-level-4 variants.
     "phi-4-mini": "microsoft/Phi-4-mini-instruct-onnx",
-    "qwen3-4b": "onnx-community/Qwen3-4B-Instruct-2507-ONNX",
+    "phi-3.5-mini": "microsoft/Phi-3.5-mini-instruct-onnx",
+    "llama-3.2-3b-genai": "onnx-community/Llama-3.2-3B-Instruct-GENAI-ONNX",
 }
 
 TIER_2: dict[str, str] = {
-    "llama-3.2-3b": "onnx-community/Llama-3.2-3B-Instruct-ONNX",
-    "smollm3-3b": "HuggingFaceTB/SmolLM3-3B-ONNX",
+    "llama-3.2-1b-genai": "onnx-community/Llama-3.2-1B-Instruct-GENAI-ONNX",
+    "phi-3-mini-4k": "microsoft/Phi-3-mini-4k-instruct-onnx",
+    "smollm3-3b": "HuggingFaceTB/SmolLM3-3B-ONNX",  # EN + 5 EU only; not JP
+}
+
+# Quarantined: kept for audit. Re-activate only if a GenAI-ready export appears.
+QUARANTINED_TIER_1: dict[str, str] = {
+    "gemma-4-e4b": "onnx-community/gemma-4-E4B-it-ONNX",
+    "gemma-4-e2b": "onnx-community/gemma-4-E2B-it-ONNX",
+    "qwen3-4b": "onnx-community/Qwen3-4B-Instruct-2507-ONNX",
 }
 
 BACKUP: dict[str, str] = {
@@ -31,7 +43,7 @@ BACKUP: dict[str, str] = {
     "gemma-3n-e4b": "google/gemma-3n-E4B-it",
 }
 
-ALL_MODELS: dict[str, str] = {**TIER_1, **TIER_2, **BACKUP}
+ALL_MODELS: dict[str, str] = {**TIER_1, **TIER_2, **BACKUP, **QUARANTINED_TIER_1}
 
 REPO_ROOT = Path(__file__).resolve().parent
 MODELS_DIR = REPO_ROOT / "downloads"
