@@ -9,22 +9,23 @@
 
 ## ASR
 
-- Engine: whisper.cpp
+- Engine: whisperkit
 - Platform: macos-arm64
 - Utterances: 6
-- CER avg: 29.93 % FAIL
-- WER avg: 84.68 %
+- CER avg: 24.19 % FAIL
+- WER avg: 83.77 %
 
 ## Per-model summary
 
-| Model | Runs | TTFT p50 (ms) | TTFT p95 (ms) | tok/s p50 | Quality avg | Peak RAM (MB) | Verdict |
-|---|---|---|---|---|---|---|---|
-| llama-3.2-3b-genai | 92 | 2445 | 12858 | 18.8 | 0.00 | 4863 | **FAIL** |
-| phi-4-mini | 92 | 2851 | 17934 | 15.6 | 0.00 | 6121 | **FAIL** |
-| phi-3.5-mini | 92 | 7376 | 42189 | 10.3 | 0.00 | 9850 | **FAIL** |
+| Model | Runs | Judged | TTFT p50 (ms) | TTFT p95 (ms) | tok/s p50 | Quality avg | Peak RAM (MB) | Verdict |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| llama-3.2-3b-genai | 92 | 0 | 2445 | 12858 | 18.8 | UNJUDGED | 4863 | **BLOCKED** |
+| phi-4-mini | 92 | 0 | 2851 | 17934 | 15.6 | UNJUDGED | 6121 | **BLOCKED** |
+| phi-3.5-mini | 92 | 0 | 7376 | 42189 | 10.3 | UNJUDGED | 9850 | **BLOCKED** |
 
 Models passing per-model hard lines: 0
 ASR hard line: FAIL
 
+Phase 0 gate NOT cleared: judge coverage incomplete.
 Phase 0 gate NOT cleared: ASR CER above hard line (or report missing).
 Phase 0 gate NOT cleared: fewer than two models passing per-model hard lines.

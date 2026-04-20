@@ -6,6 +6,7 @@ import argparse
 import datetime as _dt
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -152,10 +153,11 @@ def judge(input_text: str, output_text: str, task_type: str) -> dict:
     the default 2 to 5 since batch judge runs can be long and a single retry
     window isn't always enough for sustained rate-limit responses.
     """
-    import anthropic
-
     if task_type not in TASK_PROMPTS:
         raise SystemExit(f"unknown task_type: {task_type}")
+    _require_anthropic_api_key()
+
+    import anthropic
 
     client = anthropic.Anthropic(max_retries=5, timeout=60.0)
     user = (
@@ -217,6 +219,14 @@ def _load_input_text(workload_id: str) -> str:
     return _extract_section(raw, "INPUT")
 
 
+def _require_anthropic_api_key() -> None:
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise SystemExit(
+            "ANTHROPIC_API_KEY is required for uncached Claude judge calls. "
+            "Set it in the environment, or run only against already-cached rows."
+        )
+
+
 def judge_from_db(bench_db: Path, cache_db: Path, limit: int | None = None) -> list[dict]:
     """Iterate bench_runs, call judge for unseen (model, input, output), return records."""
     conn_bench = sqlite3.connect(bench_db)
@@ -238,6 +248,7 @@ def judge_from_db(bench_db: Path, cache_db: Path, limit: int | None = None) -> l
                 records.append({"model_id": model_id, "workload_id": workload_id, **cached})
                 continue
 
+            _require_anthropic_api_key()
             task_type = _infer_task_type(workload_id)
             input_text = _load_input_text(workload_id)
             print(f"judging: {model_id} x {workload_id}", file=sys.stderr)

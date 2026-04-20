@@ -1,0 +1,30 @@
+[package]
+name = "candle-spike"
+version = "0.0.1"
+edition = "2021"
+description = "Phase-0 Day-4 spike: validate candle-transformers can load a GGUF model and run one forward pass on Metal. Supersedes rust_ort_spike per ADR-001."
+publish = false
+
+[dependencies]
+# Pin to 0.9.2 to match sumi's lockfile. candle's API is not yet stable
+# across minor versions. Bump deliberately and re-smoke when we do.
+candle-core = { version = "=0.9.2" }
+candle-nn = { version = "=0.9.2" }
+candle-transformers = { version = "=0.9.2" }
+tokenizers = "0.20"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+default = []
+# macOS Metal. Enable with: cargo run --features metal -- ...
+metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
+# Windows / Linux NVIDIA. Not built on macOS CI.
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

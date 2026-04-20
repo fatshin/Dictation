@@ -23,20 +23,31 @@ research/phase0/
     └── report.md
 ```
 
-None of the scripts are checked in yet — they land when Phase 0 starts. This README is a placeholder so the directory is visible in the repo tree.
+The Phase 0 scripts are checked in and currently support model download,
+LLM latency/RAM benchmarking, Claude-based judging, ASR CER/WER benchmarking,
+and report aggregation.
 
-## Running (once scripts exist)
+## Running
 
 ```bash
 cd research/phase0
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python models.py download --tier 1        # ~8 GB
-python bench_llm.py --tier 1 --workloads all
-python bench_asr.py --platform auto
-python bench_e2e.py
-python quality_judge.py --all
+python models.py download 1              # large; see models.py tiers
+python bench_llm.py --all
+ANTHROPIC_API_KEY=... python quality_judge.py --all
+python bench_asr.py --engine whisperkit  # macOS; uses whisperkit-cli
+python aggregate.py
 cat results/report.md
+```
+
+For a cheap smoke pass:
+
+```bash
+python models.py smoke phi-4-mini
+python bench_llm.py --model phi-4-mini --workload inputs/ja_keigo_01.txt --runs 1 --warmup 0 --max-new-tokens 128
+ANTHROPIC_API_KEY=... python quality_judge.py --limit 3
+python bench_e2e.py
 ```
 
 ## Hardware

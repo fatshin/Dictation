@@ -27,21 +27,26 @@ Runs end-to-end on the developer's machine. Split into two sub-phases to de-risk
 ### Phase 1a — macOS-first MVP (4 weeks)
 
 - Tauri 2 shell with three-window layout
-- macOS ASR integration (WhisperKit sidecar)
-- LLM rewrite pipeline with 3 templates: rewrite / summarize / translate
+- macOS ASR integration (`whisper-rs` in-process, Metal backend)
+- LLM rewrite via `candle-transformers` (pinned 0.9.x), GGUF on Metal
+- Rewrite pipeline with 3 templates: rewrite / summarize / translate
 - SQLCipher-backed history on macOS keystore
 - Global hotkey + cursor-position text injection
 - Network-guard verification (`nettop` shows zero egress)
 - Consent UI before first recording
 - macOS local builds (unsigned)
 
-### Phase 1b — Windows parity (3 weeks)
+### Phase 1b — Windows parity (**~2 weeks**, was 3)
 
-- Windows ASR integration (sherpa-onnx sidecar)
+- Windows x86 with `whisper-rs` (CPU/CUDA) + candle (CPU/CUDA)
 - Windows keystore integration (DPAPI + TPM)
 - Windows text injection (UI Automation)
 - Windows local builds (unsigned)
 - Cross-platform regression pass
+- **Deferred**: Snapdragon X / Windows-ARM NPU acceleration. candle has no
+  QNN/DirectML backend as of 0.9.x; the CPU-only fallback may miss the
+  TTFT hard line on 3-4B INT4 models. See ADR-001 §Costs for the open
+  decision (ship degraded / add ONNX-only path / defer Windows ARM).
 
 No distribution yet. No public release.
 

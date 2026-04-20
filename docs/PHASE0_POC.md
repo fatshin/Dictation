@@ -245,10 +245,35 @@ If conditions fail:
 
 ## Phase 1 runtime risk (separate gate)
 
-Phase 0 benchmarks the candidate models using **Python** `onnxruntime_genai`. The Phase 1 production runtime uses **Rust** `ort` crate v2 with a manual KV-cache loop (no official Rust binding for `onnxruntime-genai` exists). The two are not the same binary and the Python results do not perfectly predict Rust performance.
+> **Revised 2026-04-21** per ADR-001. The original plan (Python
+> `onnxruntime_genai` → Rust `ort` v2 manual KV-cache) hit two blockers in
+> Phase 0: (1) `onnxruntime-genai 0.13.1` on macOS has a CoreML file-path
+> bug, so all 276 measured runs fell back to CPU; (2) there is no official
+> Rust binding for `onnxruntime-genai`, making Phase-1 a 1-2-week spike
+> with its own separate CoreML bug surface. The OSS survey
+> (`docs/OSS_LANDSCAPE.md`) showed `alan890104/sumi` doing the same flow
+> on `candle` + `whisper-rs`, which sidesteps both blockers. See
+> `docs/ADR-001-runtime-pivot-candle.md`.
 
-To de-risk:
+**New Phase-1 runtime**: `candle-core` / `candle-transformers` v0.9.x
+(pinned), GGUF models, Metal on macOS, CUDA on Windows x86, CPU on Windows
+ARM. ASR unifies on `whisper-rs` across OSes.
 
-- Day 1 Lane C: prototype a Rust `ort` v2 spike (`research/phase0/rust_ort_spike/`) — load one chosen model, run one forward pass, measure TTFT. Does not need to be production-quality.
-- Expect Rust manual KV-cache loop to give 10–30 % lower tokens/sec than Python `onnxruntime_genai` on the same hardware. Phase 0 Go decision should bake in a 0.7× safety margin on the Python numbers.
-- If the Rust spike on Day 1 is >50 % slower than Python, extend Phase 0 by 2–3 days to implement the C API FFI fallback, or acknowledge Rust backend risk and set a Phase 1 Week 1 "runtime-prototype gate" as an explicit No-Go retrigger.
+### Day 4 — candle spike + re-bench plan
+
+1. Scaffold `research/phase0/candle_spike/` (Rust bin, pinned `candle-*`
+   = 0.9.2, Phi-4-mini GGUF load → 1 forward pass → logits shape + TTFT).
+2. Download GGUF conversions of Phi-4-mini, Gemma-3-4B, Qwen3-4B, Llama-3.2-3B
+   (HF community). Regenerate `model_manifest.json` with `.gguf` entries.
+3. Rewrite `bench_llm.py`'s inference core to shell out to a small Rust
+   binary, or accept the existing ONNX numbers as reference-only and
+   rebuild the bench in Rust. Decision recorded at Day-4 EOD.
+4. Re-run the 3-workload smoke (ja_keigo_01 / en_business_01 / jp_en_mix_01)
+   on candle for each of the four candidates and verify: (a) load succeeds,
+   (b) JP output is Japanese, (c) TTFT is within a 2× band of ONNX CPU
+   numbers as a sanity check.
+5. Gate the full bench on candle Metal showing ≥ 1.3× speedup over
+   ONNX CPU on short workloads — if not, surface as Phase-1 runtime risk.
+
+The Rust `ort` spike at `research/phase0/rust_ort_spike/` is kept for
+audit but is **not** the Phase-1 runtime.

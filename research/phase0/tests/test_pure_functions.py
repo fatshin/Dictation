@@ -14,7 +14,7 @@ sys.path.insert(0, str(PHASE0_ROOT))
 
 import pytest  # noqa: E402
 
-from aggregate import _percentile  # noqa: E402
+from aggregate import _percentile, summarize  # noqa: E402
 from bench_asr import _infer_lang  # noqa: E402
 from bench_llm import _extract_section, _render_prompt, _task_type_for  # noqa: E402
 
@@ -45,6 +45,50 @@ class TestPercentile:
 
     def test_empty_is_inf(self) -> None:
         assert _percentile([], 0.5) == float("inf")
+
+
+class TestAggregateJudgeCoverage:
+    def test_unjudged_model_is_blocked_not_zero_quality(self) -> None:
+        rows = [{
+            "model_alias": "m",
+            "ttft_ms": 1000.0,
+            "tokens_per_sec": 20.0,
+            "peak_ram_mb": 1000.0,
+            "input_hash": "in",
+            "output_hash": "out",
+        }]
+
+        summary = summarize(rows, {})[0]
+
+        assert summary.judged_runs == 0
+        assert summary.quality_avg is None
+        assert summary.pass_quality is False
+        assert summary.verdict == "BLOCKED"
+
+    def test_fully_judged_model_can_pass_quality(self) -> None:
+        rows = [{
+            "model_alias": "m",
+            "ttft_ms": 1000.0,
+            "tokens_per_sec": 20.0,
+            "peak_ram_mb": 1000.0,
+            "input_hash": "in",
+            "output_hash": "out",
+        }]
+        judge = {
+            ("m", "in", "out"): {
+                "keigo": 8.0,
+                "filler": 8.0,
+                "semantic": 8.0,
+                "structure": 8.0,
+            }
+        }
+
+        summary = summarize(rows, judge)[0]
+
+        assert summary.judged_runs == 1
+        assert summary.quality_avg == 8.0
+        assert summary.pass_quality is True
+        assert summary.verdict == "PASS"
 
 
 class TestInferLang:

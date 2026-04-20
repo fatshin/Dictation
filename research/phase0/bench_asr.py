@@ -18,6 +18,7 @@ RESULTS_DIR = REPO_ROOT / "results"
 REPORT_PATH = RESULTS_DIR / "asr_report.json"
 WHISPER_MODELS_DIR = REPO_ROOT / "whisper_models"
 DEFAULT_WHISPER_MODEL = WHISPER_MODELS_DIR / "ggml-small.bin"
+DEFAULT_WHISPERKIT_MODEL = "large-v3-v20240930_626MB"
 
 
 @dataclass
@@ -60,8 +61,21 @@ def _select_engine(platform_tag: str) -> str:
     return "whisper.cpp"
 
 
-def _run_whisperkit(wav: Path) -> str:
-    cmd = ["whisperkit-cli", "transcribe", "--audio-path", str(wav), "--verbose", "false"]
+def _run_whisperkit(wav: Path, lang: str | None) -> str:
+    cmd = [
+        "whisperkit-cli",
+        "transcribe",
+        "--audio-path",
+        str(wav),
+        "--model",
+        DEFAULT_WHISPERKIT_MODEL,
+        "--task",
+        "transcribe",
+        "--without-timestamps",
+        "--skip-special-tokens",
+    ]
+    if lang:
+        cmd += ["--language", lang]
     out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
     return out.strip()
 
@@ -94,7 +108,7 @@ def _run_sherpa(wav: Path) -> str:
 def transcribe(wav: Path, engine: str, language: str | None = None,
                model_path: Path | None = None) -> str:
     if engine == "whisperkit":
-        return _run_whisperkit(wav)
+        return _run_whisperkit(wav, language)
     if engine == "whisper.cpp":
         return _run_whisper_cpp(wav, language, model_path)
     if engine == "sherpa-onnx":

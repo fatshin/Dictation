@@ -20,10 +20,12 @@ HARD_LINE_RAM_MB = 8 * 1024.0
 class ModelSummary:
     model_id: str
     runs: int
+    judged_runs: int
     ttft_ms_median: float
     ttft_ms_p95: float
     tokens_per_sec_median: float
-    quality_avg: float
+    quality_avg: float | None
+    quality_min: float | None
     peak_ram_mb_max: float
     pass_ttft: bool
     pass_quality: bool
@@ -46,7 +48,11 @@ def load_judge(db_path: Path) -> dict[tuple[str, str, str], dict]:
         return {}
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
-    rows = con.execute("SELECT * FROM judge_scores").fetchall()
+    try:
+        rows = con.execute("SELECT * FROM judge_scores").fetchall()
+    except sqlite3.OperationalError:
+        con.close()
+        return {}
     con.close()
     out: dict[tuple[str, str, str], dict] = {}
     for r in rows:
@@ -75,6 +81,7 @@ def summarize(results: list[dict], judge: dict[tuple[str, str, str], dict]) -> l
         rams = [r["peak_ram_mb"] for r in rs if r.get("peak_ram_mb")]
         qualities: list[float] = []
         min_axis_scores: list[float] = []
+        judged_runs = 0
         for r in rs:
             key = (model_id, r.get("input_hash", ""), r.get("output_hash", ""))
             j = judge.get(key)
@@ -82,6 +89,7 @@ def summarize(results: list[dict], judge: dict[tuple[str, str, str], dict]) -> l
                 axes = [j.get(k) for k in ("keigo", "filler", "semantic", "structure")]
                 axes = [a for a in axes if a is not None]
                 if axes:
+                    judged_runs += 1
                     qualities.append(statistics.mean(axes))
                     min_axis_scores.append(min(axes))
 
@@ -89,29 +97,41 @@ def summarize(results: list[dict], judge: dict[tuple[str, str, str], dict]) -> l
         ttft_p95 = _percentile(ttfts, 0.95) if ttfts else float("inf")
         tps_med = statistics.median(tps) if tps else 0.0
         ram_max = max(rams) if rams else float("inf")
-        quality_avg = statistics.mean(qualities) if qualities else 0.0
+        quality_avg = statistics.mean(qualities) if qualities else None
         # Block models that ace three axes but tank a fourth.
-        quality_min = min(min_axis_scores) if min_axis_scores else 0.0
+        quality_min = min(min_axis_scores) if min_axis_scores else None
 
         pass_ttft = ttft_p95 < HARD_LINE_TTFT_MS
-        pass_quality = quality_avg >= HARD_LINE_QUALITY and quality_min >= HARD_LINE_AXIS_MIN
+        fully_judged = judged_runs == len(rs)
+        pass_quality = (
+            fully_judged
+            and quality_avg is not None
+            and quality_min is not None
+            and quality_avg >= HARD_LINE_QUALITY
+            and quality_min >= HARD_LINE_AXIS_MIN
+        )
         pass_ram = ram_max < HARD_LINE_RAM_MB
-        verdict = "PASS" if (pass_ttft and pass_quality and pass_ram) else "FAIL"
+        if not fully_judged:
+            verdict = "BLOCKED"
+        else:
+            verdict = "PASS" if (pass_ttft and pass_quality and pass_ram) else "FAIL"
 
         summaries.append(ModelSummary(
             model_id=model_id,
             runs=len(rs),
+            judged_runs=judged_runs,
             ttft_ms_median=ttft_med,
             ttft_ms_p95=ttft_p95,
             tokens_per_sec_median=tps_med,
             quality_avg=quality_avg,
+            quality_min=quality_min,
             peak_ram_mb_max=ram_max,
             pass_ttft=pass_ttft,
             pass_quality=pass_quality,
             pass_ram=pass_ram,
             verdict=verdict,
         ))
-    summaries.sort(key=lambda s: (s.verdict != "PASS", -s.quality_avg, s.ttft_ms_p95))
+    summaries.sort(key=lambda s: (s.verdict != "PASS", -(s.quality_avg or 0.0), s.ttft_ms_p95))
     return summaries
 
 
@@ -164,18 +184,21 @@ def render_markdown(summaries: list[ModelSummary], asr: dict | None) -> str:
     lines += [
         "## Per-model summary",
         "",
-        "| Model | Runs | TTFT p50 (ms) | TTFT p95 (ms) | tok/s p50 | Quality avg | Peak RAM (MB) | Verdict |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Model | Runs | Judged | TTFT p50 (ms) | TTFT p95 (ms) | tok/s p50 | Quality avg | Peak RAM (MB) | Verdict |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for s in summaries:
+        quality = f"{s.quality_avg:.2f}" if s.quality_avg is not None else "UNJUDGED"
         lines.append(
-            f"| {s.model_id} | {s.runs} | {s.ttft_ms_median:.0f} | {s.ttft_ms_p95:.0f} "
-            f"| {s.tokens_per_sec_median:.1f} | {s.quality_avg:.2f} "
+            f"| {s.model_id} | {s.runs} | {s.judged_runs} | "
+            f"{s.ttft_ms_median:.0f} | {s.ttft_ms_p95:.0f} "
+            f"| {s.tokens_per_sec_median:.1f} | {quality} "
             f"| {s.peak_ram_mb_max:.0f} | **{s.verdict}** |"
         )
     lines.append("")
     passes = [s for s in summaries if s.verdict == "PASS"]
-    gate_cleared = asr_pass and len(passes) >= 2
+    blocked = [s for s in summaries if s.verdict == "BLOCKED"]
+    gate_cleared = asr_pass and len(passes) >= 2 and not blocked
     lines.append(f"Models passing per-model hard lines: {len(passes)}")
     lines.append(f"ASR hard line: {'PASS' if asr_pass else 'FAIL'}")
     if gate_cleared:
@@ -186,6 +209,8 @@ def render_markdown(summaries: list[ModelSummary], asr: dict | None) -> str:
         lines.append("**Phase 0 gate: CLEARED**")
     else:
         lines.append("")
+        if blocked:
+            lines.append("Phase 0 gate NOT cleared: judge coverage incomplete.")
         if not asr_pass:
             lines.append("Phase 0 gate NOT cleared: ASR CER above hard line (or report missing).")
         if len(passes) < 2:
