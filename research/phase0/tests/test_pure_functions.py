@@ -54,8 +54,13 @@ class TestInferLang:
     def test_english_only(self) -> None:
         assert _infer_lang("This is a test") == "en"
 
-    def test_mixed_is_none(self) -> None:
-        assert _infer_lang("これは test です") is None
+    def test_mixed_prefers_japanese(self) -> None:
+        """Whisper hint must be 'ja' for JP-dominant-mixed input, else whisper
+        translates to English rather than transcribing (Day-2.5 finding)."""
+        assert _infer_lang("これは API のテスト") == "ja"
+
+    def test_empty_is_none(self) -> None:
+        assert _infer_lang("12345") is None
 
 
 class TestTaskType:

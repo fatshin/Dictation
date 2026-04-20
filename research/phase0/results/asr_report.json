@@ -1,0 +1,69 @@
+{
+  "platform": "macos-arm64",
+  "engine": "whisper.cpp",
+  "count": 6,
+  "wer_avg": 0.8467532467532468,
+  "cer_avg": 0.29925157875881225,
+  "items": [
+    {
+      "utterance_id": "en_business_01",
+      "reference": "hey pls check the q3 numbers asap, something looks off in the revenue col. also need ur sign-off by eod thx",
+      "hypothesis": "Hey PLS check the Q3 numbers ASAP.\n Something looks off in the Revenue call also need ERS sign off by EODTA checks.",
+      "wer": 0.5714285714285714,
+      "cer": 0.2803738317757009,
+      "engine": "whisper.cpp",
+      "duration_sec": null,
+      "language": "en"
+    },
+    {
+      "utterance_id": "en_business_02",
+      "reference": "Meeting notes from today:\n- discussed Acme partnership\n- they want 15% discount, we said 8%\n- timeline: 6 weeks for POC\n- concerns about data security, need to loop in legal\n- next steps: send revised proposal by friday\n- Smith handles contract, Jones on technical\n- risk: their internal approval takes 3 weeks\n- we should start integration work in parallel",
+      "hypothesis": "Meeting notes from today. Discussed ACME partnership. They want 15% discount. We set 8% timeline.\n Six weeks for POC. Concerns about data security. Need to loop in legal.\n Next steps. Send revised proposal by Friday. Smith handles contract. Jones on technical risk.\n Their internal approval takes three weeks. We should start integration work in parallel.",
+      "wer": 0.509090909090909,
+      "cer": 0.1400560224089636,
+      "engine": "whisper.cpp",
+      "duration_sec": null,
+      "language": "en"
+    },
+    {
+      "utterance_id": "ja_keigo_01",
+      "reference": "あー、田中さん、明日の打ち合わせなんだけど、30分ずらせる？10時からでお願いしたい。場所は前回と同じでいいかな。じゃ、よろしく。",
+      "hypothesis": "あ、田中さん、明日の打ち合わせなんだけど、30分ずらせる?10時からでお願いしたい、場所は前回と同じでいいかな?じゃあ、よろしく。",
+      "wer": 1.0,
+      "cer": 0.07692307692307693,
+      "engine": "whisper.cpp",
+      "duration_sec": null,
+      "language": "ja"
+    },
+    {
+      "utterance_id": "ja_keigo_02",
+      "reference": "佐藤: プロジェクトOrionの進捗だけど、UI側はだいたい終わった感じ。あと3日もあれば仕上がる。\n鈴木: うーん、APIのほうがちょっと遅れてる。認証周りで詰まってて、週明けまでかかりそう。\n佐藤: じゃあリリース日ずらす?来週金曜予定だったけど。\n鈴木: いや、QA側と並行で進められれば金曜いけると思う。リスクは多少あるけど。\n佐藤: 了解、じゃあ予定通りで。あと顧客X社への共有は誰がやる?\n鈴木: 俺やっとく。金曜朝までにドラフト送る。",
+      "hypothesis": "さと、プロジェクトオーライアンの進捗だけど、上側は大体終わった感じ。\nあと3日もあれば仕上がる、鈴木、運、APIの方がちょっと遅れてる。\n認証周りで詰まってて、週明けまで掛かりそう。\nさと、じゃあリリース日ずらす、来週金要予定だったけど、鈴木、いや、QA側と平行で進められれば、金要行けると思う。\nリスクは、多少あるけど、さと、了解、じゃあ予定通りで、あと5客、ウックス社への共有は、誰がやる?鈴木、俺や、毒、金要亜さまでにドラフト送る。",
+      "wer": 1.0,
+      "cer": 0.30357142857142855,
+      "engine": "whisper.cpp",
+      "duration_sec": null,
+      "language": "ja"
+    },
+    {
+      "utterance_id": "jp_en_mix_01",
+      "reference": "昨日のincidentなんだけど、結局原因まだ分かってない。とりあえずroot cause analysisが必要で、今朝朝イチでSREチームと同期した。一旦workaroundは入れたから、productionは落ち着いてるんだけど、postmortem書く必要ある。明日までにドラフト出します。",
+      "hypothesis": "昨日のインシデントなんだけど、結局原因まだわかってない。\nとりあえずローエコーズアナリシスが必要で、ケサーサイチでS、R、E、チームと同期した、一旦ワーカランドは入れたから、プロダクションは落ち着いてるんだけど、ポーストモータム各必要ある、あすまでにドラフト出します。",
+      "wer": 1.0,
+      "cer": 0.48322147651006714,
+      "engine": "whisper.cpp",
+      "duration_sec": null,
+      "language": "ja"
+    },
+    {
+      "utterance_id": "jp_en_mix_02",
+      "reference": "じゃあ今日のweekly sync始めます。えーと、まずONNX RuntimeのベンチなんですけどTTFTが1.5秒出てて、これはtarget SLAの800ms超えてるのでNGです。で、going forwardとしてはquantization深掘りする必要があって、INT4まで落とせばmemory footprintも小さくなるしlatencyも改善するはず。next stepはproduction readiness checkをまず通すこと。あとdependency updateで、PyTorchを2.3から2.5に上げるかって話もあって、breaking changeはなさそうだけどregression testは必要。誰かowner決めたい。あ、Tanaka-sanお願いできます?",
+      "hypothesis": "じゃあ今日のWeekly Sync始めます\nえーと、まずオ、N、N、X、ランタイムのベンチなんですけど\nT、T、F、Tが1.5秒出てて、これはターゲットスラエの800ms、超えてるのでNGです\nで、Going forwardとしては基本体制ation Sync釣りする必要があって\nInt4まで落とせばメモリーフトプリントも小さくなるシラタンCも改善するはず\nNext Stepは、プロダクションリアDにスチュエックをまず通すこと、あとデパンダンシーアップデートで、ファイト落ちを2.3から2.5に上げるかって、話もあって、ブレーキングチュエインジは、なさそうだけどリグレッションテストは、必要\n誰かあのアキメタイ、あ、田中さんお願いできます",
+      "wer": 1.0,
+      "cer": 0.5113636363636364,
+      "engine": "whisper.cpp",
+      "duration_sec": null,
+      "language": "ja"
+    }
+  ]
+}

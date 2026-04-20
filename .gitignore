@@ -63,6 +63,7 @@ research/phase0/results/*.sqlite
 research/phase0/results/*.log
 research/phase0/results/asr_hyp/
 research/phase0/downloads/
+research/phase0/whisper_models/
 
 # Python (for bench scripts)
 __pycache__/

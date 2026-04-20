@@ -16,6 +16,8 @@ REPO_ROOT = Path(__file__).resolve().parent
 RECORDINGS_DIR = REPO_ROOT / "recordings"
 RESULTS_DIR = REPO_ROOT / "results"
 REPORT_PATH = RESULTS_DIR / "asr_report.json"
+WHISPER_MODELS_DIR = REPO_ROOT / "whisper_models"
+DEFAULT_WHISPER_MODEL = WHISPER_MODELS_DIR / "ggml-small.bin"
 
 
 @dataclass
@@ -64,7 +66,7 @@ def _run_whisperkit(wav: Path) -> str:
     return out.strip()
 
 
-def _run_whisper_cpp(wav: Path, lang: str | None) -> str:
+def _run_whisper_cpp(wav: Path, lang: str | None, model_path: Path | None = None) -> str:
     binary = _which("whisper-cli") or _which("main")
     if not binary:
         raise SystemExit("whisper.cpp binary (whisper-cli or main) not on PATH")
@@ -72,7 +74,10 @@ def _run_whisper_cpp(wav: Path, lang: str | None) -> str:
     # which would overwrite the reference <stem>.txt and corrupt future runs.
     out_base = RESULTS_DIR / "asr_hyp" / wav.stem
     out_base.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [binary, "-f", str(wav), "-otxt", "-of", str(out_base)]
+    cmd = [binary, "-f", str(wav), "-otxt", "-of", str(out_base), "--no-prints"]
+    model = model_path or DEFAULT_WHISPER_MODEL
+    if model.exists():
+        cmd += ["-m", str(model)]
     if lang:
         cmd += ["-l", lang]
     subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -86,11 +91,12 @@ def _run_sherpa(wav: Path) -> str:
     return out.strip()
 
 
-def transcribe(wav: Path, engine: str, language: str | None = None) -> str:
+def transcribe(wav: Path, engine: str, language: str | None = None,
+               model_path: Path | None = None) -> str:
     if engine == "whisperkit":
         return _run_whisperkit(wav)
     if engine == "whisper.cpp":
-        return _run_whisper_cpp(wav, language)
+        return _run_whisper_cpp(wav, language, model_path)
     if engine == "sherpa-onnx":
         return _run_sherpa(wav)
     raise SystemExit(f"unknown engine: {engine}")
@@ -116,16 +122,20 @@ def _iter_pairs(directory: Path) -> list[tuple[Path, Path]]:
 
 
 def _infer_lang(ref_text: str) -> str | None:
+    """Pick Whisper lang hint. Japanese presence wins over English to prevent
+    whisper.cpp from auto-switching into translate-mode on JP/EN-mixed audio.
+    """
     has_ja = any("\u3040" <= c <= "\u30ff" or "\u4e00" <= c <= "\u9fff" for c in ref_text)
     has_en = any(c.isascii() and c.isalpha() for c in ref_text)
-    if has_ja and not has_en:
+    if has_ja:
         return "ja"
-    if has_en and not has_ja:
+    if has_en:
         return "en"
     return None
 
 
-def run(directory: Path, engine: str | None = None) -> ASRReport:
+def run(directory: Path, engine: str | None = None,
+        model_path: Path | None = None) -> ASRReport:
     platform_tag = detect_platform()
     chosen = engine or _select_engine(platform_tag)
 
@@ -133,7 +143,7 @@ def run(directory: Path, engine: str | None = None) -> ASRReport:
     for wav, ref_file in _iter_pairs(directory):
         reference = ref_file.read_text(encoding="utf-8").strip()
         language = _infer_lang(reference)
-        hypothesis = transcribe(wav, chosen, language=language)
+        hypothesis = transcribe(wav, chosen, language=language, model_path=model_path)
         wer, cer = _score(reference, hypothesis)
         items.append(
             ASRResult(
@@ -172,10 +182,12 @@ def _cli() -> None:
     parser.add_argument("--dir", type=Path, default=RECORDINGS_DIR)
     parser.add_argument("--engine", choices=["whisperkit", "whisper.cpp", "sherpa-onnx"])
     parser.add_argument("--out", type=Path, default=REPORT_PATH)
+    parser.add_argument("--model", type=Path, default=DEFAULT_WHISPER_MODEL,
+                        help="whisper.cpp ggml model path")
     args = parser.parse_args()
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    report = run(args.dir, engine=args.engine)
+    report = run(args.dir, engine=args.engine, model_path=args.model)
     args.out.write_text(json.dumps(_serialize(report), indent=2, ensure_ascii=False))
     print(json.dumps({"platform": report.platform, "engine": report.engine,
                       "count": report.count, "wer_avg": report.wer_avg,
