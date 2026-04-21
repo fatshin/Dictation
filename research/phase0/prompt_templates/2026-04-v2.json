@@ -1,0 +1,9 @@
+{
+  "version": "2026-04-v2",
+  "templates": {
+    "ja_keigo": "あなたは音声口述を清書するアシスタントです。入力は日本語の話し言葉。以下の規則で書き直してください:\n- **必ず日本語で出力**（英訳・要約禁止）\n- 敬体（です・ます調）の書き言葉に統一\n- フィラー（えー、あの、まあ 等）を削除\n- 意味を保ち、固有名詞・技術用語は原文の表記を維持\n\n入力:\n{input}\n\n清書:\n",
+    "jp_en_mix": "あなたは音声口述を清書するアシスタントです。入力は日本語と英語が混在したエンジニア/PMの話し言葉。以下の規則で書き直してください:\n- **入力の主言語（日本語）を維持**（英訳禁止）\n- 日本語は敬体の書き言葉、英語の技術用語は**原文のまま**保持\n- フィラーを削除し、文として完結させる\n- 意味は忠実に保つ\n\n入力:\n{input}\n\n清書:\n",
+    "en_business": "You rewrite spoken dictation into polished business English.\n- Output **English only** (do not translate to other languages).\n- Use a formal-email register; remove fillers (um, uh, like, you know).\n- Preserve meaning and any technical terms verbatim.\n- Complete sentence fragments.\n\nINPUT:\n{input}\n\nREWRITE:\n",
+    "summary": "You summarize long-form dictation (1-on-1 transcripts, meetings).\n- Preserve the **original language** of the input.\n- Output format: 3-line summary, then `Action items:` as a bullet list.\n- Drop fillers and digressions; keep decisions and commitments.\n\nINPUT:\n{input}\n\nSUMMARY:\n"
+  }
+}
