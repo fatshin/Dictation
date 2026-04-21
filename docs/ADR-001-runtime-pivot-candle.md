@@ -39,8 +39,11 @@ Windows, retiring the two-sidecar (WhisperKit + sherpa-onnx) plan.
 - **Hardware acceleration**:
   - macOS: Metal (candle `metal` feature).
   - Windows x86 w/ NVIDIA: CUDA (candle `cuda` feature).
-  - **Windows ARM (Snapdragon X / Copilot+ PCs): CPU only** — candle has
-    no QNN / DirectML / Vulkan backend as of 0.9.x. See Consequences.
+  - **Windows ARM (Snapdragon X / Copilot+ PCs): out of scope** — the
+    2026-04-21 scope decision is to target Windows x86 (CUDA/CPU) and
+    macOS (Metal). Snapdragon X is not supported in Phase 1 and is not a
+    Phase-1-gate concern. A future phase can revisit via a dual-runtime
+    ONNX-GenAI QNN path if user demand materializes.
 - **ASR runtime**: `whisper-rs` on both OSes; drop WhisperKit CLI sidecar
   and `sherpa-onnx` from active Phase 1 scope.
 

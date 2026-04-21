@@ -1,0 +1,13 @@
+{
+  "arch": "Llama",
+  "device": "Metal { gpu_id: 4294968481 }",
+  "first_forward_ms": 7,
+  "input_tokens": 6,
+  "load_ms": 1216,
+  "logits_shape": [
+    1,
+    128256
+  ],
+  "model_path": "../downloads/llama-3.2-3b-gguf/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+  "prompt": "Hello, my name is"
+}

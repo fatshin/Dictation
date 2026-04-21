@@ -1,0 +1,13 @@
+{
+  "arch": "Gemma3",
+  "device": "Metal { gpu_id: 4294968481 }",
+  "first_forward_ms": 22,
+  "input_tokens": 6,
+  "load_ms": 1893,
+  "logits_shape": [
+    1,
+    262144
+  ],
+  "model_path": "../downloads/gemma-3-4b-gguf/google_gemma-3-4b-it-Q4_K_M.gguf",
+  "prompt": "Hello, my name is"
+}

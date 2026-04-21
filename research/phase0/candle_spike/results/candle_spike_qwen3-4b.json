@@ -1,0 +1,13 @@
+{
+  "arch": "Qwen3",
+  "device": "Metal { gpu_id: 4294968481 }",
+  "first_forward_ms": 9,
+  "input_tokens": 5,
+  "load_ms": 1047,
+  "logits_shape": [
+    1,
+    151936
+  ],
+  "model_path": "../downloads/qwen3-4b-gguf/Qwen3-4B-Q4_K_M.gguf",
+  "prompt": "Hello, my name is"
+}
