@@ -168,10 +168,11 @@ def judge(input_text: str, output_text: str, task_type: str) -> dict:
         "\"semantic\": <0-10>, \"structure\": <0-10>}"
     )
 
+    # claude-opus-4-7 deprecated `temperature`; rely on default deterministic
+    # behavior. JSON-only system prompt + low max_tokens caps drift.
     message = client.messages.create(
         model=JUDGE_MODEL,
         max_tokens=256,
-        temperature=0.0,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user}],
     )

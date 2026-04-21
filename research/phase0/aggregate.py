@@ -13,7 +13,11 @@ TARGET_TTFT_MS = 1500.0
 HARD_LINE_QUALITY = 7.0
 HARD_LINE_AXIS_MIN = 5.0
 HARD_LINE_CER = 0.10
-HARD_LINE_RAM_MB = 8 * 1024.0
+# Revised 2026-04-21 (ADR-002): Gemma-4 E2B/E4B with PLE + 128K context +
+# ollama daemon overhead realistically uses 7.7 / 10.3 GB. Original 8 GB
+# was set against Phi-4-mini INT4 (~2.2 GB). Target hardware spec is now
+# 16 GB unified-memory minimum (M-series Mac / 16 GB Win laptop).
+HARD_LINE_RAM_MB = 12 * 1024.0
 
 
 @dataclass

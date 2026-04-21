@@ -5,7 +5,7 @@
 - TTFT p95 < 2500 ms (target < 1500 ms)
 - LLM-as-judge quality >= 7.0
 - ASR CER avg < 10 %
-- Peak RAM < 8192 MB
+- Peak RAM < 12288 MB
 
 ## ASR
 
@@ -19,13 +19,11 @@
 
 | Model | Runs | Judged | TTFT p50 (ms) | TTFT p95 (ms) | tok/s p50 | Quality avg | Peak RAM (MB) | Verdict |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| llama-3.2-3b-genai | 92 | 0 | 2445 | 12858 | 18.8 | UNJUDGED | 4863 | **BLOCKED** |
-| phi-4-mini | 92 | 0 | 2851 | 17934 | 15.6 | UNJUDGED | 6121 | **BLOCKED** |
-| phi-3.5-mini | 92 | 0 | 7376 | 42189 | 10.3 | UNJUDGED | 9850 | **BLOCKED** |
+| gemma4-e4b | 90 | 90 | 371 | 1141 | 47.2 | 8.45 | 10300 | **PASS** |
+| gemma4-e2b | 90 | 90 | 260 | 311 | 66.3 | 8.29 | 7700 | **FAIL** |
 
-Models passing per-model hard lines: 0
+Models passing per-model hard lines: 1
 ASR hard line: FAIL
 
-Phase 0 gate NOT cleared: judge coverage incomplete.
 Phase 0 gate NOT cleared: ASR CER above hard line (or report missing).
 Phase 0 gate NOT cleared: fewer than two models passing per-model hard lines.
