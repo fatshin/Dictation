@@ -1,0 +1,40 @@
+[package]
+name = "dictation"
+version = "0.0.1"
+description = "Offline dictation + LLM rewrite (macOS / Windows). Phase 1a scaffold per ADR-001 + ADR-002."
+authors = ["Motohashi Shinichi <fatshin@gmail.com>"]
+edition = "2021"
+publish = false
+
+[lib]
+name = "dictation_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+async-trait = "0.1"
+
+# Phase 1a inference deps per ADR-002 (Ollama HTTP loopback).
+# rustls-tls keeps the build off OpenSSL and matches the offline policy.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+futures-util = "0.3"
+
+# Planned deps for next slices — uncomment when the corresponding module
+# lands so `cargo build` stays clean during scaffolding.
+# whisper-rs    = { version = "0.13", features = ["metal"] }    # ASR
+# rusqlite      = { version = "0.32", features = ["bundled-sqlcipher"] }
+# global-hotkey = "0.6"
+# enigo         = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
