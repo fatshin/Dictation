@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import "./App.css";
 
 type ModelInfo = {
@@ -39,12 +39,18 @@ const PROMPT_TEMPLATES: Record<string, string> = {
 };
 
 const PREFERRED_MODELS = ["gemma4:e4b", "gemma4:e2b"];
+const MAX_MODEL_SIZE_GB = 12;
 
 function pickDefaultModel(models: ModelInfo[]): string {
   for (const want of PREFERRED_MODELS) {
     if (models.find((m) => m.name === want)) return want;
   }
-  return models[0]?.name ?? "";
+  const suitable = models.filter((m) => m.size_bytes / 1e9 <= MAX_MODEL_SIZE_GB);
+  return suitable[0]?.name ?? models[0]?.name ?? "";
+}
+
+function isOversized(m: ModelInfo): boolean {
+  return m.size_bytes / 1e9 > MAX_MODEL_SIZE_GB;
 }
 
 type Tab = "rewrite" | "history";
@@ -74,20 +80,34 @@ export default function App() {
       .catch((e) => setError(`list_models: ${e}`));
   }, []);
 
+  const unlistenRef = useRef<UnlistenFn[]>([]);
+
   useEffect(() => {
-    const unsubs: (() => void)[] = [];
+    let cancelled = false;
 
-    listen<string>("llm:token", (e) => {
-      setOutput((prev) => prev + e.payload);
-    }).then((u) => unsubs.push(u));
-
-    listen<string>("llm:done", () => {
-      setStreaming(false);
-      setLoading(false);
-    }).then((u) => unsubs.push(u));
+    async function setup() {
+      const u1 = await listen<string>("llm:token", (e) => {
+        if (!cancelled) setOutput((prev) => prev + e.payload);
+      });
+      const u2 = await listen<string>("llm:done", () => {
+        if (!cancelled) {
+          setStreaming(false);
+          setLoading(false);
+        }
+      });
+      if (cancelled) {
+        u1();
+        u2();
+      } else {
+        unlistenRef.current = [u1, u2];
+      }
+    }
+    setup();
 
     return () => {
-      unsubs.forEach((u) => u());
+      cancelled = true;
+      unlistenRef.current.forEach((u) => u());
+      unlistenRef.current = [];
     };
   }, []);
 
@@ -190,9 +210,14 @@ export default function App() {
               <select value={model} onChange={(e) => setModel(e.target.value)}>
                 {models.length === 0 && <option value="">(loading...)</option>}
                 {models.map((m) => (
-                  <option key={m.name} value={m.name}>
+                  <option
+                    key={m.name}
+                    value={m.name}
+                    style={isOversized(m) ? { color: "#999" } : undefined}
+                  >
                     {m.name} — {(m.size_bytes / 1e9).toFixed(1)} GB
                     {m.quantization ? ` (${m.quantization})` : ""}
+                    {isOversized(m) ? " [too large]" : ""}
                   </option>
                 ))}
               </select>
@@ -219,6 +244,12 @@ export default function App() {
               onChange={(e) => setInput(e.target.value)}
               placeholder="raw dictation..."
             />
+            {models.find((m) => m.name === model && isOversized(m)) && (
+              <div className="error">
+                This model exceeds {MAX_MODEL_SIZE_GB} GB — may produce
+                corrupted output due to VRAM limits. Use gemma4:e4b or e2b.
+              </div>
+            )}
             <button onClick={rewrite} disabled={loading || !model}>
               {streaming ? "streaming..." : loading ? "rewriting..." : "Rewrite"}
             </button>
