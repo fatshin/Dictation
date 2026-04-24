@@ -1,9 +1,21 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Phase-1a main-window capability. Offline-only: no http permission. Ollama loopback (127.0.0.1:11434) is reached from the Rust backend, never from the webview, so no JS-side network grant is required.",
-  "windows": ["main"],
+  "description": "Main + overlay window capabilities. Ollama loopback (127.0.0.1:11434) is Rust-side only, no JS-side network grant.",
+  "windows": ["main", "overlay"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "core:window:default",
+    "core:window:allow-create",
+    "core:window:allow-close",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "core:event:default",
+    "core:event:allow-listen",
+    "core:event:allow-emit",
+    "global-shortcut:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister"
   ]
 }

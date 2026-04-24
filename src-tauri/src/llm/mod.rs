@@ -1,19 +1,7 @@
-//! LLM runtime abstraction (ADR-002: Ollama HTTP loopback).
-//!
-//! Phase-1a contract:
-//!   - `LlmRuntime::list_models()` enumerates locally-available models.
-//!   - `LlmRuntime::rewrite()` runs a single completion against a model+prompt
-//!     and returns the rewritten text (non-streaming for the scaffold; the
-//!     streaming path lands when the overlay window does).
-//!
-//! Default impl talks to `127.0.0.1:11434/api/generate` with `think:false`
-//! per the Phase-0 Day-5 finding: Gemma-4 default Thinking-Mode hides
-//! response when streamed via Ollama. Phase-0 results
-//! (`research/phase0/results/report.md`) drove the Tier-1 selection of
-//! `gemma4:e4b` (primary) + `gemma4:e2b` (latency fallback).
-
 use anyhow::{anyhow, Context, Result};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
 pub const DEFAULT_OLLAMA_HOST: &str = "http://127.0.0.1:11434";
 
@@ -29,7 +17,6 @@ pub struct ModelInfo {
 pub struct RewriteParams {
     pub model: String,
     pub prompt: String,
-    /// Cap on generated tokens. Phase-0 default is 512; UI can lower.
     pub max_new_tokens: u32,
 }
 
@@ -37,11 +24,12 @@ pub struct RewriteParams {
 pub trait LlmRuntime: Send + Sync {
     async fn list_models(&self) -> Result<Vec<ModelInfo>>;
     async fn rewrite(&self, params: RewriteParams) -> Result<String>;
+    async fn rewrite_streaming(
+        &self,
+        params: RewriteParams,
+        tx: mpsc::Sender<String>,
+    ) -> Result<String>;
 }
-
-// ---------------------------------------------------------------------------
-// Ollama HTTP impl
-// ---------------------------------------------------------------------------
 
 pub struct OllamaRuntime {
     base: String,
@@ -102,6 +90,8 @@ struct GenerateOptions {
 #[derive(Deserialize)]
 struct GenerateResponse {
     response: String,
+    #[serde(default)]
+    done: bool,
 }
 
 #[async_trait::async_trait]
@@ -136,8 +126,6 @@ impl LlmRuntime for OllamaRuntime {
             model: &params.model,
             prompt: &params.prompt,
             stream: false,
-            // Day-5 finding: default Thinking-Mode hides the response field.
-            // Until streaming UI lands, force think=false for non-stream path.
             think: false,
             options: GenerateOptions {
                 temperature: 0.0,
@@ -158,5 +146,77 @@ impl LlmRuntime for OllamaRuntime {
         }
         let parsed: GenerateResponse = resp.json().await.context("decode /api/generate")?;
         Ok(parsed.response)
+    }
+
+    async fn rewrite_streaming(
+        &self,
+        params: RewriteParams,
+        tx: mpsc::Sender<String>,
+    ) -> Result<String> {
+        let url = format!("{}/api/generate", self.base);
+        let body = GenerateRequest {
+            model: &params.model,
+            prompt: &params.prompt,
+            stream: true,
+            think: false,
+            options: GenerateOptions {
+                temperature: 0.0,
+                num_predict: params.max_new_tokens,
+            },
+        };
+        let resp = self
+            .http
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .with_context(|| format!("POST {url}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("ollama /api/generate returned {status}: {text}"));
+        }
+
+        let mut full_response = String::new();
+        let mut stream = resp.bytes_stream();
+        let mut buffer = String::new();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context("stream read error")?;
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+            while let Some(newline_pos) = buffer.find('\n') {
+                let line = buffer[..newline_pos].trim().to_string();
+                buffer = buffer[newline_pos + 1..].to_string();
+
+                if line.is_empty() {
+                    continue;
+                }
+
+                if let Ok(parsed) = serde_json::from_str::<GenerateResponse>(&line) {
+                    if !parsed.response.is_empty() {
+                        full_response.push_str(&parsed.response);
+                        let _ = tx.send(parsed.response).await;
+                    }
+                    if parsed.done {
+                        return Ok(full_response);
+                    }
+                }
+            }
+        }
+
+        Ok(full_response)
+    }
+}
+
+pub struct LlmState {
+    pub runtime: std::sync::Arc<dyn LlmRuntime>,
+}
+
+impl LlmState {
+    pub fn new() -> Self {
+        Self {
+            runtime: std::sync::Arc::new(OllamaRuntime::default()),
+        }
     }
 }

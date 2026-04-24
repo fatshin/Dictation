@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 type ModelInfo = {
@@ -7,6 +8,16 @@ type ModelInfo = {
   size_bytes: number;
   family: string | null;
   quantization: string | null;
+};
+
+type RewriteRecord = {
+  id: string;
+  session_id: string;
+  input_text: string;
+  output_text: string;
+  model: string;
+  template: string;
+  created_at: string;
 };
 
 const PROMPT_TEMPLATES: Record<string, string> = {
@@ -36,6 +47,8 @@ function pickDefaultModel(models: ModelInfo[]): string {
   return models[0]?.name ?? "";
 }
 
+type Tab = "rewrite" | "history";
+
 export default function App() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState<string>("");
@@ -46,6 +59,11 @@ export default function App() {
   const [output, setOutput] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [streaming, setStreaming] = useState(false);
+  const [consented, setConsented] = useState(false);
+  const [tab, setTab] = useState<Tab>("rewrite");
+  const [history, setHistory] = useState<RewriteRecord[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     invoke<ModelInfo[]>("list_models")
@@ -56,6 +74,28 @@ export default function App() {
       .catch((e) => setError(`list_models: ${e}`));
   }, []);
 
+  useEffect(() => {
+    const unsubs: (() => void)[] = [];
+
+    listen<string>("llm:token", (e) => {
+      setOutput((prev) => prev + e.payload);
+    }).then((u) => unsubs.push(u));
+
+    listen<string>("llm:done", () => {
+      setStreaming(false);
+      setLoading(false);
+    }).then((u) => unsubs.push(u));
+
+    return () => {
+      unsubs.forEach((u) => u());
+    };
+  }, []);
+
+  async function handleConsent() {
+    await invoke("grant_consent");
+    setConsented(true);
+  }
+
   async function rewrite() {
     if (!model) {
       setError("no model selected");
@@ -64,81 +104,160 @@ export default function App() {
     setLoading(true);
     setError(null);
     setOutput("");
+    setStreaming(true);
     try {
       const prompt = PROMPT_TEMPLATES[task].replace("{input}", input);
-      const result = await invoke<string>("rewrite_text", {
+      await invoke<string>("rewrite_streaming", {
         model,
         prompt,
         maxNewTokens: 512,
       });
-      setOutput(result);
     } catch (e) {
       setError(String(e));
-    } finally {
+      setStreaming(false);
       setLoading(false);
     }
+  }
+
+  async function loadHistory() {
+    try {
+      const records = searchQuery
+        ? await invoke<RewriteRecord[]>("search_history", {
+            query: searchQuery,
+            limit: 50,
+          })
+        : await invoke<RewriteRecord[]>("list_history", { limit: 50 });
+      setHistory(records);
+    } catch {
+      setHistory([]);
+    }
+  }
+
+  useEffect(() => {
+    if (tab === "history") {
+      loadHistory();
+    }
+  }, [tab]);
+
+  if (!consented) {
+    return (
+      <main className="app">
+        <header>
+          <h1>Dictation</h1>
+        </header>
+        <section className="consent">
+          <h2>Recording Consent</h2>
+          <p>
+            This application records audio from your microphone for
+            transcription. By proceeding, you confirm you are authorized to
+            record conversations you intend to process.
+          </p>
+          <p>
+            You are responsible for complying with local recording-consent laws
+            (one-party / two-party jurisdictions).
+          </p>
+          <button onClick={handleConsent}>I understand and consent</button>
+        </section>
+      </main>
+    );
   }
 
   return (
     <main className="app">
       <header>
         <h1>Dictation</h1>
-        <p className="tagline">
-          Offline dictation + LLM rewrite. Phase-1a smoke shell — type below
-          to test the Ollama path.
-        </p>
+        <nav className="tabs">
+          <button
+            className={tab === "rewrite" ? "active" : ""}
+            onClick={() => setTab("rewrite")}
+          >
+            Rewrite
+          </button>
+          <button
+            className={tab === "history" ? "active" : ""}
+            onClick={() => setTab("history")}
+          >
+            History
+          </button>
+        </nav>
       </header>
 
-      <section className="row">
-        <label>
-          Model:&nbsp;
-          <select value={model} onChange={(e) => setModel(e.target.value)}>
-            {models.length === 0 && <option value="">(loading…)</option>}
-            {models.map((m) => (
-              <option key={m.name} value={m.name}>
-                {m.name} — {(m.size_bytes / 1e9).toFixed(1)} GB
-                {m.quantization ? ` (${m.quantization})` : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Task:&nbsp;
-          <select
-            value={task}
-            onChange={(e) =>
-              setTask(e.target.value as keyof typeof PROMPT_TEMPLATES)
-            }
-          >
-            <option value="ja_keigo">ja_keigo (敬体書き換え)</option>
-            <option value="en_business">en_business (formal English)</option>
-          </select>
-        </label>
-      </section>
+      {tab === "rewrite" && (
+        <>
+          <section className="row">
+            <label>
+              Model:&nbsp;
+              <select value={model} onChange={(e) => setModel(e.target.value)}>
+                {models.length === 0 && <option value="">(loading...)</option>}
+                {models.map((m) => (
+                  <option key={m.name} value={m.name}>
+                    {m.name} — {(m.size_bytes / 1e9).toFixed(1)} GB
+                    {m.quantization ? ` (${m.quantization})` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Task:&nbsp;
+              <select
+                value={task}
+                onChange={(e) =>
+                  setTask(e.target.value as keyof typeof PROMPT_TEMPLATES)
+                }
+              >
+                <option value="ja_keigo">ja_keigo</option>
+                <option value="en_business">en_business</option>
+              </select>
+            </label>
+          </section>
 
-      <section className="io">
-        <label>Input</label>
-        <textarea
-          rows={6}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="raw dictation…"
-        />
-        <button onClick={rewrite} disabled={loading || !model}>
-          {loading ? "rewriting…" : "Rewrite"}
-        </button>
+          <section className="io">
+            <label>Input</label>
+            <textarea
+              rows={6}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="raw dictation..."
+            />
+            <button onClick={rewrite} disabled={loading || !model}>
+              {streaming ? "streaming..." : loading ? "rewriting..." : "Rewrite"}
+            </button>
 
-        <label>Output</label>
-        <textarea rows={6} readOnly value={output} placeholder="(empty)" />
-        {error && <div className="error">{error}</div>}
-      </section>
+            <label>Output</label>
+            <textarea rows={6} readOnly value={output} placeholder="(empty)" />
+            {error && <div className="error">{error}</div>}
+          </section>
+        </>
+      )}
 
-      <footer>
-        <small>
-          Phase-0 gate: LLM ✅ (gemma4:e4b primary), ASR pending real-voice
-          corpus. See <code>docs/ADR-002-runtime-pivot-ollama-gemma4.md</code>.
-        </small>
-      </footer>
+      {tab === "history" && (
+        <section className="history">
+          <div className="row">
+            <input
+              type="text"
+              placeholder="Search history..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            <button onClick={loadHistory}>Search</button>
+          </div>
+          {history.length === 0 ? (
+            <p className="empty">No history yet</p>
+          ) : (
+            <ul className="history-list">
+              {history.map((r) => (
+                <li key={r.id} className="history-item">
+                  <div className="history-meta">
+                    {r.model} | {r.template} | {r.created_at}
+                  </div>
+                  <div className="history-input">{r.input_text}</div>
+                  <div className="history-output">{r.output_text}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
     </main>
   );
 }

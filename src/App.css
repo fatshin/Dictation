@@ -22,15 +22,34 @@
   gap: 1rem;
 }
 
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 header h1 {
-  margin: 0 0 0.25rem;
+  margin: 0;
   font-size: 1.6rem;
 }
 
-.tagline {
-  margin: 0;
-  color: #555;
-  font-size: 0.9rem;
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.tabs button {
+  background: transparent;
+  color: inherit;
+  border: 1px solid #ccc;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.85rem;
+}
+
+.tabs button.active {
+  background: #1f6feb;
+  color: #fff;
+  border-color: #1f6feb;
 }
 
 .row {
@@ -45,13 +64,17 @@ header h1 {
   gap: 0.25rem;
 }
 
+.row input[type="text"] {
+  flex: 1;
+}
+
 .io {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 
-textarea, select, button {
+textarea, select, button, input[type="text"] {
   font-family: inherit;
   font-size: 1rem;
   padding: 0.5rem 0.75rem;
@@ -87,13 +110,79 @@ button:disabled {
   white-space: pre-wrap;
 }
 
-footer small {
+.consent {
+  text-align: center;
+  padding: 2rem;
+}
+
+.consent h2 {
+  margin-bottom: 1rem;
+}
+
+.consent p {
+  margin-bottom: 1rem;
+  color: #555;
+  max-width: 500px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.consent button {
+  align-self: center;
+  font-size: 1.1rem;
+  padding: 0.75rem 1.5rem;
+}
+
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.empty {
   color: #888;
+  text-align: center;
+  padding: 2rem;
+}
+
+.history-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.history-item {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.history-meta {
+  font-size: 0.75rem;
+  color: #888;
+  margin-bottom: 0.25rem;
+}
+
+.history-input {
+  font-size: 0.85rem;
+  color: #666;
+  margin-bottom: 0.25rem;
+}
+
+.history-output {
+  font-size: 0.9rem;
 }
 
 @media (prefers-color-scheme: dark) {
   :root { color: #f0f0f0; background-color: #1c1c1e; }
-  textarea, select, button { background: #2c2c2e; color: #f0f0f0; border-color: #444; }
+  textarea, select, button, input[type="text"] { background: #2c2c2e; color: #f0f0f0; border-color: #444; }
+  .tabs button { border-color: #555; }
+  .tabs button.active { background: #1f6feb; border-color: #1f6feb; }
   .error { background: #3a1f1f; color: #ff8888; }
-  footer small, .tagline { color: #aaa; }
+  .consent p, .empty { color: #aaa; }
+  .history-item { border-color: #444; }
+  .history-meta { color: #888; }
+  .history-input { color: #aaa; }
 }

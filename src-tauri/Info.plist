@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Dictation needs microphone access to transcribe your speech.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Dictation uses Apple Events to inject rewritten text into your active application.</string>
+</dict>
+</plist>
