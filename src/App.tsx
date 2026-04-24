@@ -27,15 +27,54 @@ const PROMPT_TEMPLATES: Record<string, string> = {
     "- **必ず日本語で出力**（英訳・要約禁止）\n" +
     "- 敬体（です・ます調）の書き言葉に統一\n" +
     "- フィラー（えー、あの、まあ 等）を削除\n" +
+    "- 誤字・脱字・誤変換を正しい表記に修正（例: 「いじょう」→「以上」、「おねがいしまう」→「お願いします」）\n" +
+    "- 音声認識の誤認識を文脈から推測して修正\n" +
     "- 意味を保ち、固有名詞・技術用語は原文の表記を維持\n\n" +
     "入力:\n{input}\n\n清書:\n",
   en_business:
     "You rewrite spoken dictation into polished business English.\n" +
     "- Output **English only** (do not translate to other languages).\n" +
     "- Use a formal-email register; remove fillers (um, uh, like, you know).\n" +
+    "- Fix typos, misspellings, and ASR misrecognitions (infer correct words from context).\n" +
     "- Preserve meaning and any technical terms verbatim.\n" +
     "- Complete sentence fragments.\n\n" +
     "INPUT:\n{input}\n\nREWRITE:\n",
+  ja_agent_task:
+    "あなたは口頭指示をAIエージェント向けのタスク指示書に変換するアシスタントです。\n" +
+    "入力は意味不明・断片的・口語的な音声メモです。以下の規則で整理してください:\n" +
+    "- **必ず日本語で出力**\n" +
+    "- フィラー・言い淀み・繰り返しを除去\n" +
+    "- 誤字・脱字・誤変換・音声認識ミスを文脈から推測して修正\n" +
+    "- 曖昧な指示を具体的なタスクに分解\n" +
+    "- 各タスクは「何を」「どうする」が明確な1文にする\n" +
+    "- 依存関係があれば順序を付ける\n" +
+    "- 不明確な部分は [要確認: ...] で明示\n\n" +
+    "出力フォーマット:\n" +
+    "## タスク一覧\n" +
+    "1. タスク内容\n" +
+    "2. タスク内容\n" +
+    "...\n\n" +
+    "## 補足・前提条件\n" +
+    "- 補足事項\n\n" +
+    "入力:\n{input}\n\n整理結果:\n",
+  en_agent_task:
+    "You convert messy spoken notes into clear task instructions for an AI agent.\n" +
+    "Input is informal, fragmented, possibly incoherent voice memo.\n" +
+    "Rules:\n" +
+    "- Remove fillers, false starts, repetitions\n" +
+    "- Fix typos, misspellings, and ASR misrecognitions (infer correct words from context)\n" +
+    "- Break down into discrete, actionable tasks\n" +
+    "- Each task: one clear sentence with specific action and target\n" +
+    "- Order by dependency if applicable\n" +
+    "- Flag unclear parts as [NEEDS CLARIFICATION: ...]\n\n" +
+    "Output format:\n" +
+    "## Tasks\n" +
+    "1. Task description\n" +
+    "2. Task description\n" +
+    "...\n\n" +
+    "## Notes & Assumptions\n" +
+    "- Note\n\n" +
+    "INPUT:\n{input}\n\nORGANIZED TASKS:\n",
 };
 
 const PREFERRED_MODELS = ["gemma4:e4b", "gemma4:e2b"];
@@ -55,7 +94,28 @@ function isOversized(m: ModelInfo): boolean {
 
 type Tab = "rewrite" | "history";
 
+type SetupStatus = {
+  ollama_running: boolean;
+  ollama_version: string | null;
+  models_installed: string[];
+  models_missing: string[];
+  whisper_available: boolean;
+  ready: boolean;
+};
+
+type PullProgress = {
+  model: string;
+  status: string;
+  total: number;
+  completed: number;
+};
+
 export default function App() {
+  const [setupDone, setSetupDone] = useState<boolean | null>(null);
+  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
+  const [pulling, setPulling] = useState<string | null>(null);
+  const [pullProgress, setPullProgress] = useState<PullProgress | null>(null);
+
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState<string>("");
   const [task, setTask] = useState<keyof typeof PROMPT_TEMPLATES>("ja_keigo");
@@ -72,6 +132,23 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
+    invoke<SetupStatus>("check_setup").then((s) => {
+      setSetupStatus(s);
+      setSetupDone(s.ready);
+    }).catch(() => setSetupDone(false));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unsub: UnlistenFn | null = null;
+    listen<PullProgress>("model:pull:progress", (e) => {
+      if (!cancelled) setPullProgress(e.payload);
+    }).then((u) => { if (cancelled) u(); else unsub = u; });
+    return () => { cancelled = true; unsub?.(); };
+  }, []);
+
+  useEffect(() => {
+    if (setupDone !== true) return;
     invoke<ModelInfo[]>("list_models")
       .then((m) => {
         setModels(m);
@@ -111,9 +188,77 @@ export default function App() {
     };
   }, []);
 
+  const [recording, setRecording] = useState(false);
+  const recordingRef = useRef(false);
+  const [transcript, setTranscript] = useState("");
+
+  useEffect(() => {
+    recordingRef.current = recording;
+  }, [recording]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unsub: UnlistenFn | null = null;
+
+    listen("hotkey:dictation", async () => {
+      if (cancelled) return;
+      if (recordingRef.current) {
+        try {
+          const text = await invoke<string>("stop_dictation");
+          setRecording(false);
+          setTranscript(text);
+          setInput(text);
+        } catch (e) {
+          setError(String(e));
+          setRecording(false);
+        }
+      } else {
+        try {
+          await invoke<string>("start_dictation");
+          setRecording(true);
+          setError(null);
+          setTranscript("");
+        } catch (e) {
+          setError(String(e));
+        }
+      }
+    }).then((u) => {
+      if (cancelled) u();
+      else unsub = u;
+    });
+
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
+  }, []);
+
   async function handleConsent() {
     await invoke("grant_consent");
     setConsented(true);
+  }
+
+  async function startRecording() {
+    setError(null);
+    setTranscript("");
+    try {
+      await invoke<string>("start_dictation");
+      setRecording(true);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function stopRecording() {
+    try {
+      const text = await invoke<string>("stop_dictation");
+      setRecording(false);
+      setTranscript(text);
+      setInput(text);
+    } catch (e) {
+      setError(String(e));
+      setRecording(false);
+    }
   }
 
   async function rewrite() {
@@ -158,6 +303,101 @@ export default function App() {
       loadHistory();
     }
   }, [tab]);
+
+  async function pullMissingModel() {
+    if (!setupStatus || setupStatus.models_missing.length === 0) return;
+    const modelName = setupStatus.models_missing[0];
+    setPulling(modelName);
+    setPullProgress(null);
+    try {
+      await invoke("pull_model", { model: modelName });
+      const updated = await invoke<SetupStatus>("check_setup");
+      setSetupStatus(updated);
+      setSetupDone(updated.ready);
+      setPulling(null);
+      setPullProgress(null);
+    } catch (e) {
+      setError(String(e));
+      setPulling(null);
+    }
+  }
+
+  if (setupDone === null) {
+    return (
+      <main className="app">
+        <header><h1>Dictation</h1></header>
+        <section className="consent"><p>Checking setup...</p></section>
+      </main>
+    );
+  }
+
+  if (setupDone === false && setupStatus) {
+    const pct = pullProgress && pullProgress.total > 0
+      ? Math.round((pullProgress.completed / pullProgress.total) * 100)
+      : 0;
+    return (
+      <main className="app">
+        <header><h1>Dictation — Setup</h1></header>
+        <section className="consent">
+          <h2>Initial Setup</h2>
+
+          <div className="setup-checklist">
+            <div className={setupStatus.ollama_running ? "check-ok" : "check-fail"}>
+              {setupStatus.ollama_running ? "OK" : "NG"} Ollama
+              {setupStatus.ollama_version && ` (v${setupStatus.ollama_version})`}
+              {!setupStatus.ollama_running && (
+                <p className="hint">
+                  Install Ollama from <strong>ollama.com</strong> and run <code>ollama serve</code>
+                </p>
+              )}
+            </div>
+
+            <div className={setupStatus.models_missing.length === 0 ? "check-ok" : "check-fail"}>
+              {setupStatus.models_missing.length === 0 ? "OK" : "NG"} LLM Models
+              {setupStatus.models_installed.length > 0 && (
+                <span className="hint"> ({setupStatus.models_installed.join(", ")})</span>
+              )}
+              {setupStatus.models_missing.length > 0 && (
+                <div>
+                  <p className="hint">Missing: {setupStatus.models_missing.join(", ")}</p>
+                  {pulling ? (
+                    <div className="pull-progress">
+                      <div>Downloading {pulling}... {pullProgress?.status}</div>
+                      {pullProgress && pullProgress.total > 0 && (
+                        <div className="progress-bar">
+                          <div className="progress-fill" style={{ width: `${pct}%` }} />
+                          <span>{pct}%</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <button onClick={pullMissingModel} disabled={!setupStatus.ollama_running}>
+                      Download {setupStatus.models_missing[0]}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className={setupStatus.whisper_available ? "check-ok" : "check-fail"}>
+              {setupStatus.whisper_available ? "OK" : "NG"} Whisper ASR Model
+              {!setupStatus.whisper_available && (
+                <p className="hint">whisper-small.bin not found</p>
+              )}
+            </div>
+          </div>
+
+          {setupStatus.ollama_running && setupStatus.models_missing.length === 0 && (
+            <button onClick={() => setSetupDone(true)} style={{ marginTop: "1rem" }}>
+              Continue
+            </button>
+          )}
+
+          {error && <div className="error">{error}</div>}
+        </section>
+      </main>
+    );
+  }
 
   if (!consented) {
     return (
@@ -230,19 +470,34 @@ export default function App() {
                   setTask(e.target.value as keyof typeof PROMPT_TEMPLATES)
                 }
               >
-                <option value="ja_keigo">ja_keigo</option>
-                <option value="en_business">en_business</option>
+                <option value="ja_keigo">ja_keigo (敬体書き換え)</option>
+                <option value="en_business">en_business (formal English)</option>
+                <option value="ja_agent_task">ja_agent_task (タスク整理)</option>
+                <option value="en_agent_task">en_agent_task (task organizer)</option>
               </select>
             </label>
           </section>
 
           <section className="io">
-            <label>Input</label>
+            <div className="row">
+              <label>Input</label>
+              <button
+                className={recording ? "recording" : ""}
+                onClick={recording ? stopRecording : startRecording}
+                disabled={loading}
+                style={{ marginLeft: "auto" }}
+              >
+                {recording ? "Stop Recording" : "Record"}
+              </button>
+            </div>
+            {transcript && (
+              <div className="transcript-info">Transcribed from voice input</div>
+            )}
             <textarea
               rows={6}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="raw dictation..."
+              placeholder="raw dictation or press Record..."
             />
             {models.find((m) => m.name === model && isOversized(m)) && (
               <div className="error">

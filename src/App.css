@@ -100,6 +100,79 @@ button:disabled {
   cursor: not-allowed;
 }
 
+button.recording {
+  background: #dc3545;
+  border-color: #dc3545;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.setup-checklist {
+  text-align: left;
+  max-width: 500px;
+  margin: 0 auto 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.check-ok {
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid #28a745;
+  background: rgba(40, 167, 69, 0.05);
+}
+
+.check-fail {
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid #dc3545;
+  background: rgba(220, 53, 69, 0.05);
+}
+
+.hint {
+  font-size: 0.8rem;
+  color: #888;
+  margin: 0.25rem 0 0;
+}
+
+.pull-progress {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.progress-bar {
+  height: 20px;
+  background: #e0e0e0;
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+  margin-top: 0.25rem;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #1f6feb;
+  transition: width 0.3s;
+}
+
+.progress-bar span {
+  position: absolute;
+  right: 8px;
+  top: 0;
+  line-height: 20px;
+  font-size: 0.75rem;
+  color: #333;
+}
+
+.transcript-info {
+  font-size: 0.8rem;
+  color: #28a745;
+  font-style: italic;
+}
+
 .error {
   color: #c00;
   background: #fee;

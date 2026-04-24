@@ -753,6 +753,7 @@ dependencies = [
  "rtrb",
  "rubato",
  "rusqlite",
+ "scopeguard",
  "security-framework",
  "serde",
  "serde_json",

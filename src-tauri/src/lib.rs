@@ -15,8 +15,9 @@ use session::SessionState;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Manager,
+    Emitter, Manager,
 };
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -38,8 +39,11 @@ pub fn run() {
             commands::inject_text,
             commands::search_history,
             commands::list_history,
+            commands::check_setup,
+            commands::pull_model,
         ])
         .setup(|app| {
+            // Tray
             let show = MenuItemBuilder::with_id("show", "Show Dictation").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
             let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
@@ -60,6 +64,17 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+
+            // Global shortcut: Cmd+Shift+D (Mac) / Ctrl+Shift+D (Win)
+            #[cfg(target_os = "macos")]
+            let shortcut = Shortcut::new(Some(Modifiers::META | Modifiers::SHIFT), Code::KeyD);
+            #[cfg(not(target_os = "macos"))]
+            let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyD);
+
+            let handle = app.handle().clone();
+            app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, _event| {
+                let _ = handle.emit("hotkey:dictation", ());
+            })?;
 
             Ok(())
         })
