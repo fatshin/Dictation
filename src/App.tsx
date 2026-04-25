@@ -190,11 +190,13 @@ export default function App() {
 
   const [recording, setRecording] = useState(false);
   const recordingRef = useRef(false);
+  const modelRef = useRef(model);
+  const taskRef = useRef(task);
   const [transcript, setTranscript] = useState("");
 
-  useEffect(() => {
-    recordingRef.current = recording;
-  }, [recording]);
+  useEffect(() => { recordingRef.current = recording; }, [recording]);
+  useEffect(() => { modelRef.current = model; }, [model]);
+  useEffect(() => { taskRef.current = task; }, [task]);
 
   useEffect(() => {
     let cancelled = false;
@@ -203,14 +205,40 @@ export default function App() {
     listen("hotkey:dictation", async () => {
       if (cancelled) return;
       if (recordingRef.current) {
+        // Stop → Transcribe → Rewrite → Paste (full pipeline)
         try {
           const text = await invoke<string>("stop_dictation");
           setRecording(false);
           setTranscript(text);
           setInput(text);
+
+          if (text.trim()) {
+            // Auto-rewrite with current task template
+            setLoading(true);
+            setOutput("");
+            setStreaming(true);
+            setError(null);
+            const tmpl = PROMPT_TEMPLATES[taskRef.current] || PROMPT_TEMPLATES["ja_keigo"];
+            const prompt = tmpl.replace("{input}", text);
+            const currentModel = modelRef.current;
+            if (currentModel) {
+              const result = await invoke<string>("rewrite_streaming", {
+                model: currentModel,
+                prompt,
+                maxNewTokens: 512,
+              });
+              // Auto-paste to focused app
+              if (result?.trim()) {
+                await new Promise((r) => setTimeout(r, 200));
+                await invoke("inject_text", { text: result, mode: "clipboard" });
+              }
+            }
+          }
         } catch (e) {
           setError(String(e));
           setRecording(false);
+          setStreaming(false);
+          setLoading(false);
         }
       } else {
         try {
@@ -261,10 +289,10 @@ export default function App() {
     }
   }
 
-  async function rewrite() {
+  async function rewrite(): Promise<string | null> {
     if (!model) {
       setError("no model selected");
-      return;
+      return null;
     }
     setLoading(true);
     setError(null);
@@ -272,15 +300,26 @@ export default function App() {
     setStreaming(true);
     try {
       const prompt = PROMPT_TEMPLATES[task].replace("{input}", input);
-      await invoke<string>("rewrite_streaming", {
+      const result = await invoke<string>("rewrite_streaming", {
         model,
         prompt,
         maxNewTokens: 512,
       });
+      return result;
     } catch (e) {
       setError(String(e));
       setStreaming(false);
       setLoading(false);
+      return null;
+    }
+  }
+
+  async function pasteToApp() {
+    if (!output) return;
+    try {
+      await invoke("inject_text", { text: output, mode: "clipboard" });
+    } catch (e) {
+      setError(String(e));
     }
   }
 
@@ -447,7 +486,7 @@ export default function App() {
           <section className="row">
             <label>
               Model:&nbsp;
-              <select value={model} onChange={(e) => setModel(e.target.value)}>
+              <select data-model-select value={model} onChange={(e) => setModel(e.target.value)}>
                 {models.length === 0 && <option value="">(loading...)</option>}
                 {models.map((m) => (
                   <option
@@ -465,6 +504,7 @@ export default function App() {
             <label>
               Task:&nbsp;
               <select
+                data-task-select
                 value={task}
                 onChange={(e) =>
                   setTask(e.target.value as keyof typeof PROMPT_TEMPLATES)
@@ -509,7 +549,19 @@ export default function App() {
               {streaming ? "streaming..." : loading ? "rewriting..." : "Rewrite"}
             </button>
 
-            <label>Output</label>
+            <div className="row">
+              <label>Output</label>
+              {output && (
+                <button
+                  onClick={pasteToApp}
+                  disabled={!output || loading}
+                  style={{ marginLeft: "auto" }}
+                  className="paste-btn"
+                >
+                  Paste to app
+                </button>
+              )}
+            </div>
             <textarea rows={6} readOnly value={output} placeholder="(empty)" />
             {error && <div className="error">{error}</div>}
           </section>
