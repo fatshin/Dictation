@@ -264,12 +264,31 @@ pub async fn stop_dictation(
 }
 
 #[tauri::command]
-pub async fn inject_text(text: String, mode: Option<String>) -> Result<(), String> {
+pub async fn inject_text(
+    app: AppHandle,
+    text: String,
+    mode: Option<String>,
+) -> Result<(), String> {
     let inject_mode = match mode.as_deref() {
         Some("direct") => InjectMode::Direct,
         _ => InjectMode::Clipboard,
     };
-    TextInjector::inject(&text, inject_mode).map_err(|e| format!("{e:#}"))
+
+    // enigo's macOS backend calls HIToolbox APIs (TSMGetInputSourceProperty,
+    // islGetInputSourceListWithAdditions) which assert main-thread. Tauri
+    // dispatches #[command] async fns onto tokio worker threads, so the
+    // assertion trips and crashes the process. Hop the entire injection onto
+    // the main NSRunLoop via Tauri's run_on_main_thread.
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let result = TextInjector::inject(&text, inject_mode);
+        let _ = tx.send(result);
+    })
+    .map_err(|e| format!("run_on_main_thread dispatch: {e}"))?;
+
+    rx.await
+        .map_err(|e| format!("inject result channel closed: {e}"))?
+        .map_err(|e| format!("{e:#}"))
 }
 
 #[derive(Debug, Clone, Serialize)]
