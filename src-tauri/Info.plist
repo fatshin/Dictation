@@ -6,5 +6,7 @@
     <string>Dictation needs microphone access to transcribe your speech.</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>Dictation uses Apple Events to inject rewritten text into your active application.</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Dictation reads the focused text field to provide context-aware typo correction. The text never leaves your machine.</string>
 </dict>
 </plist>

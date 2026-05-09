@@ -46,9 +46,12 @@ enigo = "0.6"
 # History DB
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher"] }
 
-# macOS keystore
+# macOS keystore + CGEventTap (fn key) + Accessibility API (focused field context)
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"
+core-foundation = "0.10"
+core-graphics = "0.24"
+accessibility-sys = "0.1"
 
 [profile.release]
 opt-level = 3

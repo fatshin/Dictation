@@ -1,14 +1,16 @@
-use crate::asr::{AsrState, WhisperAsr};
+use crate::asr::{resolve_whisper_model_path, AsrState, WhisperAsr};
 use crate::audio::AudioConfig;
 use crate::db::{DbState, RewriteRecord};
-use crate::inject::{InjectMode, TextInjector};
+use crate::inject::{
+    get_focused_field_context, is_ax_trusted, FocusedFieldContext, InjectMode, TextInjector,
+};
 use crate::llm::{LlmState, ModelInfo, RewriteParams};
 use crate::session::{DictationSession, SessionInfo, SessionStage, SessionState};
 use serde::Serialize;
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc;
 
-const WHISPER_MODEL_PATH: &str = "research/phase0/whisper_models/ggml-small.bin";
 const REQUIRED_MODELS: &[&str] = &["gemma4:e4b", "gemma4:e2b"];
 const RING_BUFFER_SIZE: usize = 16000 * 60; // 60 seconds at 16kHz
 
@@ -116,18 +118,15 @@ pub async fn start_dictation(
         guard.is_none()
     };
     if needs_load {
-        let model_path = std::env::current_dir()
-            .unwrap_or_default()
-            .parent()
-            .map(|p| p.join(WHISPER_MODEL_PATH))
-            .unwrap_or_default();
+        let model_path = resolve_whisper_model_path(&app)
+            .ok_or_else(|| "Whisper model not found. Set DICTATION_WHISPER_MODEL or install to ~/Library/Application Support/Dictation/models/ggml-small.bin".to_string())?;
         let path_str = model_path.to_string_lossy().to_string();
         let asr = tokio::task::spawn_blocking(move || WhisperAsr::new(&path_str))
             .await
             .map_err(|e| format!("join error: {e}"))?
             .map_err(|e| format!("whisper load failed: {e:#}"))?;
         let mut guard = asr_state.whisper.lock().map_err(|e| format!("{e}"))?;
-        *guard = Some(asr);
+        *guard = Some(Arc::new(asr));
     }
 
     // Start audio capture
@@ -214,16 +213,15 @@ pub async fn stop_dictation(
     });
 
     // Transcribe (CPU-blocking, must use spawn_blocking)
-    let ctx_ptr = {
+    let whisper_arc: Arc<WhisperAsr> = {
         let guard = asr_state.whisper.lock().map_err(|e| format!("{e}"))?;
         match guard.as_ref() {
-            Some(whisper) => &whisper.ctx as *const _ as usize,
+            Some(whisper) => Arc::clone(whisper),
             None => return Err("Whisper model not loaded".to_string()),
         }
     };
-    // guard is dropped here, safe to .await
     let transcript = tokio::task::spawn_blocking(move || {
-        let ctx = unsafe { &*(ctx_ptr as *const whisper_rs::WhisperContext) };
+        let ctx = &whisper_arc.ctx;
         let mut params = whisper_rs::FullParams::new(
             whisper_rs::SamplingStrategy::Greedy { best_of: 1 },
         );
@@ -265,10 +263,58 @@ pub async fn stop_dictation(
 #[tauri::command]
 pub async fn inject_text(text: String, mode: Option<String>) -> Result<(), String> {
     let inject_mode = match mode.as_deref() {
-        Some("clipboard") => InjectMode::Clipboard,
-        _ => InjectMode::Direct,
+        Some("direct") => InjectMode::Direct,
+        _ => InjectMode::Clipboard,
     };
     TextInjector::inject(&text, inject_mode).map_err(|e| format!("{e:#}"))
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FocusedContext {
+    pub text: String,
+    pub truncated: bool,
+}
+
+impl From<FocusedFieldContext> for FocusedContext {
+    fn from(c: FocusedFieldContext) -> Self {
+        Self {
+            text: c.text,
+            truncated: c.truncated,
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_focused_context() -> Result<Option<FocusedContext>, String> {
+    // AX calls are fast but synchronous; isolate from the runtime thread.
+    tokio::task::spawn_blocking(|| get_focused_field_context().map(Into::into))
+        .await
+        .map_err(|e| format!("join: {e}"))
+}
+
+/// Build the rewrite prompt by filling `{input}`, `{context}`, and
+/// `{dictionary}` placeholders. The dictionary slot is left empty in Phase A;
+/// Phase B1 wires the SQLCipher-backed dictionary in.
+#[tauri::command]
+pub fn build_rewrite_prompt(
+    template: String,
+    input: String,
+    context: Option<String>,
+    dictionary: Option<String>,
+) -> String {
+    let context_block = context
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| format!("\n参考(現在の入力欄の内容):\n{s}\n"))
+        .unwrap_or_default();
+    let dictionary_block = dictionary
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| format!("\n辞書(以下の表記を尊重してください):\n{s}\n"))
+        .unwrap_or_default();
+
+    template
+        .replace("{input}", &input)
+        .replace("{context}", &context_block)
+        .replace("{dictionary}", &dictionary_block)
 }
 
 #[tauri::command]
@@ -309,17 +355,22 @@ pub struct SetupStatus {
     pub models_installed: Vec<String>,
     pub models_missing: Vec<String>,
     pub whisper_available: bool,
+    pub ax_trusted: bool,
     pub ready: bool,
 }
 
 #[tauri::command]
-pub async fn check_setup(state: State<'_, LlmState>) -> Result<SetupStatus, String> {
+pub async fn check_setup(
+    app: AppHandle,
+    state: State<'_, LlmState>,
+) -> Result<SetupStatus, String> {
     let mut status = SetupStatus {
         ollama_running: false,
         ollama_version: None,
         models_installed: vec![],
         models_missing: vec![],
         whisper_available: false,
+        ax_trusted: is_ax_trusted(),
         ready: false,
     };
 
@@ -352,12 +403,7 @@ pub async fn check_setup(state: State<'_, LlmState>) -> Result<SetupStatus, Stri
     }
 
     // Check whisper model
-    let whisper_path = std::env::current_dir()
-        .unwrap_or_default()
-        .parent()
-        .map(|p| p.join(WHISPER_MODEL_PATH))
-        .unwrap_or_default();
-    status.whisper_available = whisper_path.exists();
+    status.whisper_available = resolve_whisper_model_path(&app).is_some();
 
     status.ready = status.ollama_running
         && status.models_missing.is_empty()
@@ -411,4 +457,56 @@ pub async fn pull_model(app: AppHandle, model: String) -> Result<(), String> {
 
     let _ = app.emit("model:pull:done", &model);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_rewrite_prompt_substitutes_input() {
+        let out = build_rewrite_prompt(
+            "INPUT={input}".to_string(),
+            "hello".to_string(),
+            None,
+            None,
+        );
+        assert_eq!(out, "INPUT=hello");
+    }
+
+    #[test]
+    fn build_rewrite_prompt_inserts_context_block_when_present() {
+        let out = build_rewrite_prompt(
+            "{context}{input}".to_string(),
+            "hi".to_string(),
+            Some("こんにちは".into()),
+            None,
+        );
+        assert!(out.contains("参考(現在の入力欄の内容):"));
+        assert!(out.contains("こんにちは"));
+        assert!(out.ends_with("hi"));
+    }
+
+    #[test]
+    fn build_rewrite_prompt_skips_empty_context_and_dictionary() {
+        let out = build_rewrite_prompt(
+            "[c={context}][d={dictionary}][in={input}]".to_string(),
+            "x".to_string(),
+            Some("   ".into()),
+            None,
+        );
+        assert_eq!(out, "[c=][d=][in=x]");
+    }
+
+    #[test]
+    fn build_rewrite_prompt_inserts_dictionary_block() {
+        let out = build_rewrite_prompt(
+            "{dictionary}{input}".to_string(),
+            "x".to_string(),
+            None,
+            Some("- 本橋(もとはし)".into()),
+        );
+        assert!(out.contains("辞書(以下の表記を尊重してください):"));
+        assert!(out.contains("本橋(もとはし)"));
+    }
 }

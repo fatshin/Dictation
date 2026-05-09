@@ -1,6 +1,11 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+pub mod context;
+pub use context::{
+    ensure_ax_trusted, get_focused_field_context, is_ax_trusted, FocusedFieldContext,
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InjectMode {

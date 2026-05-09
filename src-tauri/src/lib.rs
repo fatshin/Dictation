@@ -3,6 +3,7 @@ pub mod audio;
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod hotkey;
 pub mod inject;
 pub mod keystore;
 pub mod llm;
@@ -41,6 +42,8 @@ pub fn run() {
             commands::list_history,
             commands::check_setup,
             commands::pull_model,
+            commands::get_focused_context,
+            commands::build_rewrite_prompt,
         ])
         .setup(|app| {
             // Tray
@@ -75,6 +78,19 @@ pub fn run() {
             app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, _event| {
                 let _ = handle.emit("hotkey:dictation", ());
             })?;
+
+            // Trigger the Accessibility permission prompt on first run.
+            // Without this, AXValue calls return None silently and the user
+            // never realises that context-aware correction is broken.
+            #[cfg(target_os = "macos")]
+            {
+                let trusted = inject::ensure_ax_trusted();
+                log::info!("AX trusted: {trusted}");
+            }
+
+            // fn-key long-press listener (macOS only). Requires Input Monitoring
+            // permission; the prompt appears on first run.
+            hotkey::start_fn_key_listener(app.handle().clone());
 
             Ok(())
         })

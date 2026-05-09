@@ -29,15 +29,19 @@ const PROMPT_TEMPLATES: Record<string, string> = {
     "- フィラー（えー、あの、まあ 等）を削除\n" +
     "- 誤字・脱字・誤変換を正しい表記に修正（例: 「いじょう」→「以上」、「おねがいしまう」→「お願いします」）\n" +
     "- 音声認識の誤認識を文脈から推測して修正\n" +
-    "- 意味を保ち、固有名詞・技術用語は原文の表記を維持\n\n" +
+    "- 参考(現在の入力欄)があれば、それと整合する語彙・固有名詞・トーンに合わせる\n" +
+    "- 意味を保ち、固有名詞・技術用語は原文の表記を維持\n" +
+    "{context}{dictionary}\n" +
     "入力:\n{input}\n\n清書:\n",
   en_business:
     "You rewrite spoken dictation into polished business English.\n" +
     "- Output **English only** (do not translate to other languages).\n" +
     "- Use a formal-email register; remove fillers (um, uh, like, you know).\n" +
     "- Fix typos, misspellings, and ASR misrecognitions (infer correct words from context).\n" +
+    "- If a 'context' block is provided, align vocabulary, names, and tone with it.\n" +
     "- Preserve meaning and any technical terms verbatim.\n" +
-    "- Complete sentence fragments.\n\n" +
+    "- Complete sentence fragments.\n" +
+    "{context}{dictionary}\n" +
     "INPUT:\n{input}\n\nREWRITE:\n",
   ja_agent_task:
     "あなたは口頭指示をAIエージェント向けのタスク指示書に変換するアシスタントです。\n" +
@@ -55,7 +59,8 @@ const PROMPT_TEMPLATES: Record<string, string> = {
     "2. タスク内容\n" +
     "...\n\n" +
     "## 補足・前提条件\n" +
-    "- 補足事項\n\n" +
+    "- 補足事項\n" +
+    "{context}{dictionary}\n" +
     "入力:\n{input}\n\n整理結果:\n",
   en_agent_task:
     "You convert messy spoken notes into clear task instructions for an AI agent.\n" +
@@ -73,7 +78,8 @@ const PROMPT_TEMPLATES: Record<string, string> = {
     "2. Task description\n" +
     "...\n\n" +
     "## Notes & Assumptions\n" +
-    "- Note\n\n" +
+    "- Note\n" +
+    "{context}{dictionary}\n" +
     "INPUT:\n{input}\n\nORGANIZED TASKS:\n",
 };
 
@@ -100,6 +106,7 @@ type SetupStatus = {
   models_installed: string[];
   models_missing: string[];
   whisper_available: boolean;
+  ax_trusted: boolean;
   ready: boolean;
 };
 
@@ -130,12 +137,27 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("rewrite");
   const [history, setHistory] = useState<RewriteRecord[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [autoPaste, setAutoPaste] = useState(true);
 
   useEffect(() => {
-    invoke<SetupStatus>("check_setup").then((s) => {
-      setSetupStatus(s);
-      setSetupDone(s.ready);
-    }).catch(() => setSetupDone(false));
+    invoke<SetupStatus>("check_setup")
+      .then((s) => {
+        setSetupStatus(s);
+        setSetupDone(s.ready);
+      })
+      .catch((e) => {
+        setError(`check_setup: ${String(e)}`);
+        setSetupStatus({
+          ollama_running: false,
+          ollama_version: null,
+          models_installed: [],
+          models_missing: [PREFERRED_MODELS[0]],
+          whisper_available: false,
+          ax_trusted: false,
+          ready: false,
+        });
+        setSetupDone(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -155,9 +177,66 @@ export default function App() {
         setModel(pickDefaultModel(m));
       })
       .catch((e) => setError(`list_models: ${e}`));
-  }, []);
+  }, [setupDone]);
 
   const unlistenRef = useRef<UnlistenFn[]>([]);
+
+  const modelRef = useRef(model);
+  const taskRef = useRef(task);
+  const autoPasteRef = useRef(autoPaste);
+  useEffect(() => { modelRef.current = model; }, [model]);
+  useEffect(() => { taskRef.current = task; }, [task]);
+  useEffect(() => { autoPasteRef.current = autoPaste; }, [autoPaste]);
+
+  async function runRewrite(
+    sourceText: string,
+    selectedModel: string,
+    selectedTask: keyof typeof PROMPT_TEMPLATES,
+    shouldAutoPaste: boolean,
+  ): Promise<string | null> {
+    if (!selectedModel) {
+      setError("no model selected");
+      return null;
+    }
+    setLoading(true);
+    setError(null);
+    setOutput("");
+    setStreaming(true);
+    try {
+      let context: string | null = null;
+      try {
+        const ctx = await invoke<{ text: string; truncated: boolean } | null>(
+          "get_focused_context",
+        );
+        if (ctx && ctx.text) context = ctx.text;
+      } catch {
+        // AX permission missing or focused element opaque (Electron, etc.) —
+        // fall through to ASR-only.
+      }
+
+      const prompt = await invoke<string>("build_rewrite_prompt", {
+        template: PROMPT_TEMPLATES[selectedTask],
+        input: sourceText,
+        context,
+        dictionary: null, // Phase B1 wires this up
+      });
+      const result = await invoke<string>("rewrite_streaming", {
+        model: selectedModel,
+        prompt,
+        maxNewTokens: 512,
+      });
+      if (shouldAutoPaste && result?.trim()) {
+        await new Promise((r) => setTimeout(r, 300));
+        await invoke("inject_text", { text: result, mode: "clipboard" });
+      }
+      return result;
+    } catch (e) {
+      setError(String(e));
+      setStreaming(false);
+      setLoading(false);
+      return null;
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -190,13 +269,9 @@ export default function App() {
 
   const [recording, setRecording] = useState(false);
   const recordingRef = useRef(false);
-  const modelRef = useRef(model);
-  const taskRef = useRef(task);
   const [transcript, setTranscript] = useState("");
 
   useEffect(() => { recordingRef.current = recording; }, [recording]);
-  useEffect(() => { modelRef.current = model; }, [model]);
-  useEffect(() => { taskRef.current = task; }, [task]);
 
   useEffect(() => {
     let cancelled = false;
@@ -213,25 +288,14 @@ export default function App() {
           setInput(text);
 
           if (text.trim()) {
-            // Auto-rewrite with current task template
-            setLoading(true);
-            setOutput("");
-            setStreaming(true);
-            setError(null);
-            const tmpl = PROMPT_TEMPLATES[taskRef.current] || PROMPT_TEMPLATES["ja_keigo"];
-            const prompt = tmpl.replace("{input}", text);
             const currentModel = modelRef.current;
             if (currentModel) {
-              const result = await invoke<string>("rewrite_streaming", {
-                model: currentModel,
-                prompt,
-                maxNewTokens: 512,
-              });
-              // Auto-paste to focused app
-              if (result?.trim()) {
-                await new Promise((r) => setTimeout(r, 200));
-                await invoke("inject_text", { text: result, mode: "clipboard" });
-              }
+              await runRewrite(
+                text,
+                currentModel,
+                taskRef.current,
+                autoPasteRef.current,
+              );
             }
           }
         } catch (e) {
@@ -258,6 +322,58 @@ export default function App() {
     return () => {
       cancelled = true;
       unsub?.();
+    };
+  }, []);
+
+  // fn long-press push-to-talk: hold fn 500ms → record while held, release → run pipeline
+  useEffect(() => {
+    let cancelled = false;
+    const subs: UnlistenFn[] = [];
+
+    listen("hotkey:press_start", async () => {
+      if (cancelled || recordingRef.current) return;
+      try {
+        await invoke<string>("start_dictation");
+        setRecording(true);
+        setError(null);
+        setTranscript("");
+      } catch (e) {
+        setError(String(e));
+      }
+    }).then((u) => {
+      if (cancelled) u();
+      else subs.push(u);
+    });
+
+    listen("hotkey:press_end", async () => {
+      if (cancelled || !recordingRef.current) return;
+      try {
+        const text = await invoke<string>("stop_dictation");
+        setRecording(false);
+        setTranscript(text);
+        setInput(text);
+        if (text.trim() && modelRef.current) {
+          await runRewrite(
+            text,
+            modelRef.current,
+            taskRef.current,
+            autoPasteRef.current,
+          );
+        }
+      } catch (e) {
+        setError(String(e));
+        setRecording(false);
+        setStreaming(false);
+        setLoading(false);
+      }
+    }).then((u) => {
+      if (cancelled) u();
+      else subs.push(u);
+    });
+
+    return () => {
+      cancelled = true;
+      subs.forEach((u) => u());
     };
   }, []);
 
@@ -290,28 +406,7 @@ export default function App() {
   }
 
   async function rewrite(): Promise<string | null> {
-    if (!model) {
-      setError("no model selected");
-      return null;
-    }
-    setLoading(true);
-    setError(null);
-    setOutput("");
-    setStreaming(true);
-    try {
-      const prompt = PROMPT_TEMPLATES[task].replace("{input}", input);
-      const result = await invoke<string>("rewrite_streaming", {
-        model,
-        prompt,
-        maxNewTokens: 512,
-      });
-      return result;
-    } catch (e) {
-      setError(String(e));
-      setStreaming(false);
-      setLoading(false);
-      return null;
-    }
+    return runRewrite(input, model, task, autoPaste);
   }
 
   async function pasteToApp() {
@@ -545,9 +640,19 @@ export default function App() {
                 corrupted output due to VRAM limits. Use gemma4:e4b or e2b.
               </div>
             )}
-            <button onClick={rewrite} disabled={loading || !model}>
-              {streaming ? "streaming..." : loading ? "rewriting..." : "Rewrite"}
-            </button>
+            <div className="row" style={{ alignItems: "center" }}>
+              <button onClick={rewrite} disabled={loading || !model}>
+                {streaming ? "streaming..." : loading ? "rewriting..." : "Rewrite"}
+              </button>
+              <label className="toggle-label">
+                <input
+                  type="checkbox"
+                  checked={autoPaste}
+                  onChange={(e) => setAutoPaste(e.target.checked)}
+                />
+                Auto-paste
+              </label>
+            </div>
 
             <div className="row">
               <label>Output</label>
