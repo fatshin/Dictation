@@ -20,67 +20,27 @@ type RewriteRecord = {
   created_at: string;
 };
 
-const PROMPT_TEMPLATES: Record<string, string> = {
-  ja_keigo:
-    "あなたは音声口述を清書するアシスタントです。" +
-    "入力は日本語の話し言葉。以下の規則で書き直してください:\n" +
-    "- **必ず日本語で出力**（英訳・要約禁止）\n" +
-    "- 敬体（です・ます調）の書き言葉に統一\n" +
-    "- フィラー（えー、あの、まあ 等）を削除\n" +
-    "- 誤字・脱字・誤変換を正しい表記に修正（例: 「いじょう」→「以上」、「おねがいしまう」→「お願いします」）\n" +
-    "- 音声認識の誤認識を文脈から推測して修正\n" +
-    "- 参考(現在の入力欄)があれば、それと整合する語彙・固有名詞・トーンに合わせる\n" +
-    "- 意味を保ち、固有名詞・技術用語は原文の表記を維持\n" +
-    "{context}{dictionary}\n" +
-    "入力:\n{input}\n\n清書:\n",
-  en_business:
-    "You rewrite spoken dictation into polished business English.\n" +
-    "- Output **English only** (do not translate to other languages).\n" +
-    "- Use a formal-email register; remove fillers (um, uh, like, you know).\n" +
-    "- Fix typos, misspellings, and ASR misrecognitions (infer correct words from context).\n" +
-    "- If a 'context' block is provided, align vocabulary, names, and tone with it.\n" +
-    "- Preserve meaning and any technical terms verbatim.\n" +
-    "- Complete sentence fragments.\n" +
-    "{context}{dictionary}\n" +
-    "INPUT:\n{input}\n\nREWRITE:\n",
-  ja_agent_task:
-    "あなたは口頭指示をAIエージェント向けのタスク指示書に変換するアシスタントです。\n" +
-    "入力は意味不明・断片的・口語的な音声メモです。以下の規則で整理してください:\n" +
-    "- **必ず日本語で出力**\n" +
-    "- フィラー・言い淀み・繰り返しを除去\n" +
-    "- 誤字・脱字・誤変換・音声認識ミスを文脈から推測して修正\n" +
-    "- 曖昧な指示を具体的なタスクに分解\n" +
-    "- 各タスクは「何を」「どうする」が明確な1文にする\n" +
-    "- 依存関係があれば順序を付ける\n" +
-    "- 不明確な部分は [要確認: ...] で明示\n\n" +
-    "出力フォーマット:\n" +
-    "## タスク一覧\n" +
-    "1. タスク内容\n" +
-    "2. タスク内容\n" +
-    "...\n\n" +
-    "## 補足・前提条件\n" +
-    "- 補足事項\n" +
-    "{context}{dictionary}\n" +
-    "入力:\n{input}\n\n整理結果:\n",
-  en_agent_task:
-    "You convert messy spoken notes into clear task instructions for an AI agent.\n" +
-    "Input is informal, fragmented, possibly incoherent voice memo.\n" +
-    "Rules:\n" +
-    "- Remove fillers, false starts, repetitions\n" +
-    "- Fix typos, misspellings, and ASR misrecognitions (infer correct words from context)\n" +
-    "- Break down into discrete, actionable tasks\n" +
-    "- Each task: one clear sentence with specific action and target\n" +
-    "- Order by dependency if applicable\n" +
-    "- Flag unclear parts as [NEEDS CLARIFICATION: ...]\n\n" +
-    "Output format:\n" +
-    "## Tasks\n" +
-    "1. Task description\n" +
-    "2. Task description\n" +
-    "...\n\n" +
-    "## Notes & Assumptions\n" +
-    "- Note\n" +
-    "{context}{dictionary}\n" +
-    "INPUT:\n{input}\n\nORGANIZED TASKS:\n",
+type PromptTemplate = {
+  id: string;
+  name: string;
+  label: string;
+  body: string;
+  language: string;
+  is_builtin: boolean;
+  order_idx: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type DictionaryEntry = {
+  id: string;
+  term: string;
+  reading: string | null;
+  aliases: string[];
+  category: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 const PREFERRED_MODELS = ["gemma4:e4b", "gemma4:e2b"];
@@ -98,7 +58,7 @@ function isOversized(m: ModelInfo): boolean {
   return m.size_bytes / 1e9 > MAX_MODEL_SIZE_GB;
 }
 
-type Tab = "rewrite" | "history";
+type Tab = "rewrite" | "history" | "settings";
 
 type SetupStatus = {
   ollama_running: boolean;
@@ -125,7 +85,9 @@ export default function App() {
 
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState<string>("");
-  const [task, setTask] = useState<keyof typeof PROMPT_TEMPLATES>("ja_keigo");
+  const [prompts, setPrompts] = useState<PromptTemplate[]>([]);
+  const [promptId, setPromptId] = useState<string>("");
+  const [dictionary, setDictionary] = useState<DictionaryEntry[]>([]);
   const [input, setInput] = useState<string>(
     "あー、田中さん、明日の打ち合わせなんだけど、30分ずらせる？10時からでお願いしたい。場所は前回と同じでいいかな。じゃ、よろしく。",
   );
@@ -182,20 +144,53 @@ export default function App() {
   const unlistenRef = useRef<UnlistenFn[]>([]);
 
   const modelRef = useRef(model);
-  const taskRef = useRef(task);
+  const promptIdRef = useRef(promptId);
   const autoPasteRef = useRef(autoPaste);
   useEffect(() => { modelRef.current = model; }, [model]);
-  useEffect(() => { taskRef.current = task; }, [task]);
+  useEffect(() => { promptIdRef.current = promptId; }, [promptId]);
   useEffect(() => { autoPasteRef.current = autoPaste; }, [autoPaste]);
+
+  async function reloadPrompts() {
+    try {
+      const list = await invoke<PromptTemplate[]>("list_prompts");
+      setPrompts(list);
+      if (list.length > 0 && !list.find((p) => p.id === promptIdRef.current)) {
+        const defaultPrompt =
+          list.find((p) => p.name === "ja_keigo") ?? list[0];
+        setPromptId(defaultPrompt.id);
+      }
+    } catch (e) {
+      setError(`list_prompts: ${e}`);
+    }
+  }
+
+  async function reloadDictionary() {
+    try {
+      setDictionary(await invoke<DictionaryEntry[]>("list_dictionary"));
+    } catch (e) {
+      setError(`list_dictionary: ${e}`);
+    }
+  }
+
+  useEffect(() => {
+    if (setupDone !== true) return;
+    reloadPrompts();
+    reloadDictionary();
+  }, [setupDone]);
 
   async function runRewrite(
     sourceText: string,
     selectedModel: string,
-    selectedTask: keyof typeof PROMPT_TEMPLATES,
+    selectedPromptId: string,
     shouldAutoPaste: boolean,
   ): Promise<string | null> {
     if (!selectedModel) {
       setError("no model selected");
+      return null;
+    }
+    const tmpl = prompts.find((p) => p.id === selectedPromptId);
+    if (!tmpl) {
+      setError("no prompt template selected");
       return null;
     }
     setLoading(true);
@@ -214,11 +209,22 @@ export default function App() {
         // fall through to ASR-only.
       }
 
+      let dictionaryBlock: string | null = null;
+      try {
+        const block = await invoke<string>("extract_dictionary_block", {
+          input: sourceText,
+          context,
+        });
+        if (block && block.length > 0) dictionaryBlock = block;
+      } catch {
+        // DB not initialised or empty dictionary — proceed without.
+      }
+
       const prompt = await invoke<string>("build_rewrite_prompt", {
-        template: PROMPT_TEMPLATES[selectedTask],
+        template: tmpl.body,
         input: sourceText,
         context,
-        dictionary: null, // Phase B1 wires this up
+        dictionary: dictionaryBlock,
       });
       const result = await invoke<string>("rewrite_streaming", {
         model: selectedModel,
@@ -293,7 +299,7 @@ export default function App() {
               await runRewrite(
                 text,
                 currentModel,
-                taskRef.current,
+                promptIdRef.current,
                 autoPasteRef.current,
               );
             }
@@ -356,7 +362,7 @@ export default function App() {
           await runRewrite(
             text,
             modelRef.current,
-            taskRef.current,
+            promptIdRef.current,
             autoPasteRef.current,
           );
         }
@@ -406,7 +412,7 @@ export default function App() {
   }
 
   async function rewrite(): Promise<string | null> {
-    return runRewrite(input, model, task, autoPaste);
+    return runRewrite(input, model, promptId, autoPaste);
   }
 
   async function pasteToApp() {
@@ -437,6 +443,86 @@ export default function App() {
       loadHistory();
     }
   }, [tab]);
+
+  async function saveDictionary(payload: Partial<DictionaryEntry> & { term: string }) {
+    try {
+      await invoke("upsert_dictionary_entry", {
+        payload: {
+          id: payload.id ?? null,
+          term: payload.term,
+          reading: payload.reading ?? null,
+          aliases: payload.aliases ?? [],
+          category: payload.category ?? null,
+          notes: payload.notes ?? null,
+        },
+      });
+      await reloadDictionary();
+    } catch (e) {
+      setError(`upsert_dictionary_entry: ${e}`);
+    }
+  }
+
+  async function removeDictionary(id: string) {
+    if (!confirm("この辞書エントリを削除しますか?")) return;
+    try {
+      await invoke("delete_dictionary_entry", { id });
+      await reloadDictionary();
+    } catch (e) {
+      setError(`delete_dictionary_entry: ${e}`);
+    }
+  }
+
+  async function savePrompt(payload: {
+    id?: string;
+    name: string;
+    label: string;
+    body: string;
+    language: string;
+  }) {
+    if (!payload.body.includes("{input}")) {
+      setError("プロンプト本文に {input} プレースホルダが必要です");
+      return;
+    }
+    try {
+      await invoke("upsert_prompt", {
+        payload: {
+          id: payload.id ?? null,
+          name: payload.name,
+          label: payload.label,
+          body: payload.body,
+          language: payload.language,
+        },
+      });
+      await reloadPrompts();
+    } catch (e) {
+      setError(`upsert_prompt: ${e}`);
+    }
+  }
+
+  async function removePrompt(p: PromptTemplate) {
+    if (p.is_builtin) {
+      setError("組込みテンプレートは削除できません(リセット可能)");
+      return;
+    }
+    if (!confirm(`プロンプト「${p.label}」を削除しますか?`)) return;
+    try {
+      await invoke("delete_prompt", { id: p.id });
+      await reloadPrompts();
+    } catch (e) {
+      setError(`delete_prompt: ${e}`);
+    }
+  }
+
+  async function resetPromptToDefault(p: PromptTemplate) {
+    if (!p.is_builtin) return;
+    if (!confirm(`「${p.label}」を初期値に戻しますか?`)) return;
+    try {
+      await invoke("reset_prompt", { id: p.id });
+      await reloadPrompts();
+    } catch (e) {
+      setError(`reset_prompt: ${e}`);
+    }
+  }
 
   async function pullMissingModel() {
     if (!setupStatus || setupStatus.models_missing.length === 0) return;
@@ -573,6 +659,12 @@ export default function App() {
           >
             History
           </button>
+          <button
+            className={tab === "settings" ? "active" : ""}
+            onClick={() => setTab("settings")}
+          >
+            Settings
+          </button>
         </nav>
       </header>
 
@@ -600,15 +692,15 @@ export default function App() {
               Task:&nbsp;
               <select
                 data-task-select
-                value={task}
-                onChange={(e) =>
-                  setTask(e.target.value as keyof typeof PROMPT_TEMPLATES)
-                }
+                value={promptId}
+                onChange={(e) => setPromptId(e.target.value)}
               >
-                <option value="ja_keigo">ja_keigo (敬体書き換え)</option>
-                <option value="en_business">en_business (formal English)</option>
-                <option value="ja_agent_task">ja_agent_task (タスク整理)</option>
-                <option value="en_agent_task">en_agent_task (task organizer)</option>
+                {prompts.length === 0 && <option value="">(loading...)</option>}
+                {prompts.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label} {p.is_builtin ? "" : "(custom)"}
+                  </option>
+                ))}
               </select>
             </label>
           </section>
@@ -673,6 +765,18 @@ export default function App() {
         </>
       )}
 
+      {tab === "settings" && (
+        <SettingsPanel
+          dictionary={dictionary}
+          prompts={prompts}
+          onSaveDict={saveDictionary}
+          onDeleteDict={removeDictionary}
+          onSavePrompt={savePrompt}
+          onDeletePrompt={removePrompt}
+          onResetPrompt={resetPromptToDefault}
+        />
+      )}
+
       {tab === "history" && (
         <section className="history">
           <div className="row">
@@ -702,5 +806,314 @@ export default function App() {
         </section>
       )}
     </main>
+  );
+}
+
+type SettingsProps = {
+  dictionary: DictionaryEntry[];
+  prompts: PromptTemplate[];
+  onSaveDict: (
+    p: Partial<DictionaryEntry> & { term: string },
+  ) => Promise<void>;
+  onDeleteDict: (id: string) => Promise<void>;
+  onSavePrompt: (p: {
+    id?: string;
+    name: string;
+    label: string;
+    body: string;
+    language: string;
+  }) => Promise<void>;
+  onDeletePrompt: (p: PromptTemplate) => Promise<void>;
+  onResetPrompt: (p: PromptTemplate) => Promise<void>;
+};
+
+function SettingsPanel(props: SettingsProps) {
+  const [section, setSection] = useState<"dict" | "prompt">("dict");
+  return (
+    <section className="settings">
+      <nav className="tabs sub">
+        <button
+          className={section === "dict" ? "active" : ""}
+          onClick={() => setSection("dict")}
+        >
+          辞書
+        </button>
+        <button
+          className={section === "prompt" ? "active" : ""}
+          onClick={() => setSection("prompt")}
+        >
+          プロンプト
+        </button>
+      </nav>
+      {section === "dict" ? (
+        <DictionaryEditor
+          entries={props.dictionary}
+          onSave={props.onSaveDict}
+          onDelete={props.onDeleteDict}
+        />
+      ) : (
+        <PromptEditor
+          prompts={props.prompts}
+          onSave={props.onSavePrompt}
+          onDelete={props.onDeletePrompt}
+          onReset={props.onResetPrompt}
+        />
+      )}
+    </section>
+  );
+}
+
+function DictionaryEditor(props: {
+  entries: DictionaryEntry[];
+  onSave: (p: Partial<DictionaryEntry> & { term: string }) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState<Partial<DictionaryEntry> | null>(null);
+  const [aliasesText, setAliasesText] = useState("");
+
+  function startEdit(e: DictionaryEntry | null) {
+    setEditing(e ?? { term: "", reading: "", aliases: [], category: "", notes: "" });
+    setAliasesText(e?.aliases?.join(", ") ?? "");
+  }
+
+  async function submit() {
+    if (!editing?.term?.trim()) return;
+    const aliases = aliasesText
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    await props.onSave({
+      id: editing.id,
+      term: editing.term.trim(),
+      reading: editing.reading?.trim() || null,
+      aliases,
+      category: editing.category?.trim() || null,
+      notes: editing.notes?.trim() || null,
+    });
+    setEditing(null);
+  }
+
+  return (
+    <div className="settings-section">
+      <div className="row">
+        <h3>辞書 ({props.entries.length})</h3>
+        <button onClick={() => startEdit(null)} style={{ marginLeft: "auto" }}>
+          + 追加
+        </button>
+      </div>
+      <p className="hint">
+        音声認識の誤認識マッピングや固有名詞の表記をここに登録します。LLM 修正時に
+        入力 / 文脈に出現する語のみ自動でプロンプトに差し込まれます。
+      </p>
+
+      {props.entries.length === 0 ? (
+        <p className="empty">エントリなし</p>
+      ) : (
+        <ul className="dict-list">
+          {props.entries.map((e) => (
+            <li key={e.id}>
+              <div>
+                <strong>{e.term}</strong>
+                {e.reading && <span className="reading"> ({e.reading})</span>}
+                {e.category && <span className="badge">{e.category}</span>}
+              </div>
+              {e.aliases.length > 0 && (
+                <div className="hint">aliases: {e.aliases.join(", ")}</div>
+              )}
+              {e.notes && <div className="hint">{e.notes}</div>}
+              <div className="row">
+                <button onClick={() => startEdit(e)}>編集</button>
+                <button onClick={() => props.onDelete(e.id)}>削除</button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {editing && (
+        <div className="edit-form">
+          <label>
+            表記(必須)
+            <input
+              value={editing.term ?? ""}
+              onChange={(ev) =>
+                setEditing({ ...editing, term: ev.target.value })
+              }
+            />
+          </label>
+          <label>
+            読み
+            <input
+              value={editing.reading ?? ""}
+              onChange={(ev) =>
+                setEditing({ ...editing, reading: ev.target.value })
+              }
+            />
+          </label>
+          <label>
+            誤認識マッピング(カンマ区切り)
+            <input
+              value={aliasesText}
+              onChange={(ev) => setAliasesText(ev.target.value)}
+              placeholder="元橋, もと橋"
+            />
+          </label>
+          <label>
+            カテゴリ
+            <input
+              value={editing.category ?? ""}
+              onChange={(ev) =>
+                setEditing({ ...editing, category: ev.target.value })
+              }
+              placeholder="person / company / tech / phrase"
+            />
+          </label>
+          <label>
+            メモ
+            <textarea
+              rows={2}
+              value={editing.notes ?? ""}
+              onChange={(ev) =>
+                setEditing({ ...editing, notes: ev.target.value })
+              }
+            />
+          </label>
+          <div className="row">
+            <button onClick={submit}>保存</button>
+            <button onClick={() => setEditing(null)}>キャンセル</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PromptEditor(props: {
+  prompts: PromptTemplate[];
+  onSave: (p: {
+    id?: string;
+    name: string;
+    label: string;
+    body: string;
+    language: string;
+  }) => Promise<void>;
+  onDelete: (p: PromptTemplate) => Promise<void>;
+  onReset: (p: PromptTemplate) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState<{
+    id?: string;
+    name: string;
+    label: string;
+    body: string;
+    language: string;
+  } | null>(null);
+
+  function startEdit(p: PromptTemplate | null) {
+    setEditing(
+      p
+        ? {
+            id: p.id,
+            name: p.name,
+            label: p.label,
+            body: p.body,
+            language: p.language,
+          }
+        : { name: "", label: "", body: "{input}", language: "ja" },
+    );
+  }
+
+  async function submit() {
+    if (!editing) return;
+    if (!editing.name.trim() || !editing.label.trim()) return;
+    await props.onSave(editing);
+    setEditing(null);
+  }
+
+  return (
+    <div className="settings-section">
+      <div className="row">
+        <h3>プロンプトテンプレート ({props.prompts.length})</h3>
+        <button onClick={() => startEdit(null)} style={{ marginLeft: "auto" }}>
+          + 追加
+        </button>
+      </div>
+      <p className="hint">
+        本文には <code>{"{input}"}</code> 必須。<code>{"{context}"}</code>{" "}
+        と <code>{"{dictionary}"}</code>{" "}
+        は空のとき自動で省略されます。
+      </p>
+
+      <ul className="prompt-list">
+        {props.prompts.map((p) => (
+          <li key={p.id}>
+            <div className="row">
+              <strong>{p.label}</strong>
+              <span className="badge">{p.language}</span>
+              {p.is_builtin && <span className="badge">builtin</span>}
+              <span style={{ marginLeft: "auto" }} />
+              <button onClick={() => startEdit(p)}>編集</button>
+              {p.is_builtin ? (
+                <button onClick={() => props.onReset(p)}>リセット</button>
+              ) : (
+                <button onClick={() => props.onDelete(p)}>削除</button>
+              )}
+            </div>
+            <div className="hint" style={{ fontSize: "0.75rem" }}>
+              {p.name}
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      {editing && (
+        <div className="edit-form">
+          <label>
+            name (slug、英数字)
+            <input
+              value={editing.name}
+              onChange={(ev) =>
+                setEditing({ ...editing, name: ev.target.value })
+              }
+              disabled={!!editing.id}
+            />
+          </label>
+          <label>
+            label (UI表示)
+            <input
+              value={editing.label}
+              onChange={(ev) =>
+                setEditing({ ...editing, label: ev.target.value })
+              }
+            />
+          </label>
+          <label>
+            language
+            <select
+              value={editing.language}
+              onChange={(ev) =>
+                setEditing({ ...editing, language: ev.target.value })
+              }
+            >
+              <option value="ja">ja</option>
+              <option value="en">en</option>
+            </select>
+          </label>
+          <label>
+            body
+            <textarea
+              rows={14}
+              value={editing.body}
+              onChange={(ev) =>
+                setEditing({ ...editing, body: ev.target.value })
+              }
+            />
+          </label>
+          <div className="row">
+            <button onClick={submit}>保存</button>
+            <button onClick={() => setEditing(null)}>キャンセル</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

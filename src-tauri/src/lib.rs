@@ -44,6 +44,14 @@ pub fn run() {
             commands::pull_model,
             commands::get_focused_context,
             commands::build_rewrite_prompt,
+            commands::list_dictionary,
+            commands::upsert_dictionary_entry,
+            commands::delete_dictionary_entry,
+            commands::list_prompts,
+            commands::upsert_prompt,
+            commands::delete_prompt,
+            commands::reset_prompt,
+            commands::extract_dictionary_block,
         ])
         .setup(|app| {
             // Tray
@@ -91,6 +99,29 @@ pub fn run() {
             // fn-key long-press listener (macOS only). Requires Input Monitoring
             // permission; the prompt appears on first run.
             hotkey::start_fn_key_listener(app.handle().clone());
+
+            // Open the encrypted DB and seed built-in prompts. Failure here is
+            // logged but does not abort startup — the rest of the app
+            // (rewrite-only flows) can still function.
+            #[cfg(target_os = "macos")]
+            {
+                use crate::keystore::{Keystore, MacKeystore};
+                let result = (|| -> anyhow::Result<()> {
+                    let key = MacKeystore.get_or_create_db_key("com.dictation.app")?;
+                    let local_dir = app.path().app_local_data_dir()?;
+                    std::fs::create_dir_all(&local_dir)?;
+                    let db_path = local_dir.join("dictation.db");
+                    let opened = db::EncryptedDb::open(&db_path, &key)?;
+                    opened.seed_builtin_prompts(db::BUILTIN_PROMPTS)?;
+                    let state: tauri::State<DbState> = app.state();
+                    let mut guard = state.db.blocking_lock();
+                    *guard = Some(opened);
+                    Ok(())
+                })();
+                if let Err(e) = result {
+                    log::error!("DB init failed: {e:#}");
+                }
+            }
 
             Ok(())
         })

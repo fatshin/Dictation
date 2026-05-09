@@ -1,6 +1,9 @@
 use crate::asr::{resolve_whisper_model_path, AsrState, WhisperAsr};
 use crate::audio::AudioConfig;
-use crate::db::{DbState, RewriteRecord};
+use crate::db::{
+    DbState, DictionaryEntry, DictionaryUpsert, PromptTemplate, PromptTemplateUpsert,
+    RewriteRecord, BUILTIN_PROMPTS,
+};
 use crate::inject::{
     get_focused_field_context, is_ax_trusted, FocusedFieldContext, InjectMode, TextInjector,
 };
@@ -459,6 +462,162 @@ pub async fn pull_model(app: AppHandle, model: String) -> Result<(), String> {
     Ok(())
 }
 
+// ----- Dictionary commands -----
+
+#[tauri::command]
+pub async fn list_dictionary(state: State<'_, DbState>) -> Result<Vec<DictionaryEntry>, String> {
+    let guard = state.db.lock().await;
+    match guard.as_ref() {
+        Some(db) => db.list_dictionary().map_err(|e| format!("{e:#}")),
+        None => Err("DB not initialized".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn upsert_dictionary_entry(
+    state: State<'_, DbState>,
+    payload: DictionaryUpsert,
+) -> Result<DictionaryEntry, String> {
+    let guard = state.db.lock().await;
+    match guard.as_ref() {
+        Some(db) => db.upsert_dictionary(&payload).map_err(|e| format!("{e:#}")),
+        None => Err("DB not initialized".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn delete_dictionary_entry(
+    state: State<'_, DbState>,
+    id: String,
+) -> Result<(), String> {
+    let guard = state.db.lock().await;
+    match guard.as_ref() {
+        Some(db) => db.delete_dictionary(&id).map_err(|e| format!("{e:#}")),
+        None => Err("DB not initialized".into()),
+    }
+}
+
+// ----- Prompt-template commands -----
+
+#[tauri::command]
+pub async fn list_prompts(state: State<'_, DbState>) -> Result<Vec<PromptTemplate>, String> {
+    let guard = state.db.lock().await;
+    match guard.as_ref() {
+        Some(db) => db.list_prompt_templates().map_err(|e| format!("{e:#}")),
+        None => Err("DB not initialized".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn upsert_prompt(
+    state: State<'_, DbState>,
+    payload: PromptTemplateUpsert,
+) -> Result<PromptTemplate, String> {
+    let guard = state.db.lock().await;
+    match guard.as_ref() {
+        Some(db) => db
+            .upsert_prompt_template(&payload)
+            .map_err(|e| format!("{e:#}")),
+        None => Err("DB not initialized".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn delete_prompt(state: State<'_, DbState>, id: String) -> Result<(), String> {
+    let guard = state.db.lock().await;
+    match guard.as_ref() {
+        Some(db) => db.delete_prompt_template(&id).map_err(|e| format!("{e:#}")),
+        None => Err("DB not initialized".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn reset_prompt(
+    state: State<'_, DbState>,
+    id: String,
+) -> Result<PromptTemplate, String> {
+    let guard = state.db.lock().await;
+    match guard.as_ref() {
+        Some(db) => db
+            .reset_prompt_template(&id, BUILTIN_PROMPTS)
+            .map_err(|e| format!("{e:#}")),
+        None => Err("DB not initialized".into()),
+    }
+}
+
+/// Build a dictionary block by extracting only entries whose `term`,
+/// `reading`, or `aliases` actually appear in the input/context. This avoids
+/// shipping the entire dictionary into every prompt — long contexts hurt
+/// small-LLM Japanese quality more than missing rare terms do.
+#[tauri::command]
+pub async fn extract_dictionary_block(
+    state: State<'_, DbState>,
+    input: String,
+    context: Option<String>,
+) -> Result<String, String> {
+    let entries = {
+        let guard = state.db.lock().await;
+        match guard.as_ref() {
+            Some(db) => db.list_dictionary().map_err(|e| format!("{e:#}"))?,
+            None => return Ok(String::new()),
+        }
+    };
+    Ok(format_relevant_dictionary(&entries, &input, context.as_deref()))
+}
+
+/// Pure helper, kept testable. Returns a multi-line bullet list or empty.
+pub fn format_relevant_dictionary(
+    entries: &[DictionaryEntry],
+    input: &str,
+    context: Option<&str>,
+) -> String {
+    let haystack: String = match context {
+        Some(c) => format!("{input}\n{c}"),
+        None => input.to_string(),
+    };
+    let mut lines: Vec<String> = Vec::new();
+    for e in entries {
+        let mut needles: Vec<&str> = Vec::with_capacity(2 + e.aliases.len());
+        if !e.term.is_empty() {
+            needles.push(&e.term);
+        }
+        if let Some(r) = e.reading.as_deref() {
+            if !r.is_empty() {
+                needles.push(r);
+            }
+        }
+        for a in &e.aliases {
+            if !a.is_empty() {
+                needles.push(a);
+            }
+        }
+        let hit = needles.iter().any(|n| haystack.contains(n));
+        if !hit {
+            continue;
+        }
+        let reading = e
+            .reading
+            .as_deref()
+            .filter(|r| !r.is_empty())
+            .map(|r| format!("({r})"))
+            .unwrap_or_default();
+        let category = e
+            .category
+            .as_deref()
+            .filter(|c| !c.is_empty())
+            .map(|c| format!(" [{c}]"))
+            .unwrap_or_default();
+        let notes = e
+            .notes
+            .as_deref()
+            .filter(|n| !n.is_empty())
+            .map(|n| format!(" — {n}"))
+            .unwrap_or_default();
+        lines.push(format!("- {}{reading}{category}{notes}", e.term));
+    }
+    lines.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,5 +667,45 @@ mod tests {
         );
         assert!(out.contains("辞書(以下の表記を尊重してください):"));
         assert!(out.contains("本橋(もとはし)"));
+    }
+
+    fn dict(term: &str, reading: Option<&str>, aliases: &[&str]) -> DictionaryEntry {
+        DictionaryEntry {
+            id: "x".into(),
+            term: term.into(),
+            reading: reading.map(String::from),
+            aliases: aliases.iter().map(|s| s.to_string()).collect(),
+            category: None,
+            notes: None,
+            created_at: "".into(),
+            updated_at: "".into(),
+        }
+    }
+
+    #[test]
+    fn extract_dictionary_skips_unmatched_entries() {
+        let entries = vec![
+            dict("本橋", Some("もとはし"), &["元橋"]),
+            dict("ARI", None, &[]),
+        ];
+        // Input mentions only one of them — the other should be skipped.
+        let out = format_relevant_dictionary(&entries, "今日は元橋さんと話しました", None);
+        assert!(out.contains("本橋"));
+        assert!(!out.contains("ARI"));
+    }
+
+    #[test]
+    fn extract_dictionary_uses_context_haystack() {
+        let entries = vec![dict("Vite", None, &[])];
+        let out =
+            format_relevant_dictionary(&entries, "build setup", Some("we ship a Vite project"));
+        assert!(out.contains("Vite"));
+    }
+
+    #[test]
+    fn extract_dictionary_returns_empty_when_no_match() {
+        let entries = vec![dict("本橋", Some("もとはし"), &["元橋"])];
+        let out = format_relevant_dictionary(&entries, "hello world", None);
+        assert!(out.is_empty());
     }
 }
