@@ -14,7 +14,9 @@
 # beforehand. The script does NOT auto-pull because pulls are bandwidth-heavy
 # and easy to misfire — print the missing pulls instead.
 
-set -euo pipefail
+# Intentionally NOT `set -e`: one model crashing the harness must not
+# block the remaining candidates. We log each model's exit code instead.
+set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
@@ -63,6 +65,10 @@ for line in "${LINES[@]}"; do
     --model-alias "$alias" \
     --ollama-model "$tag" \
     --runs 3
+  rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "  [bench-FAIL] $alias exit=$rc — continuing"
+  fi
 done
 
 echo "=== done. aggregate with: python aggregate.py ==="

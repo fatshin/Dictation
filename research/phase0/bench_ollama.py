@@ -133,8 +133,15 @@ def _ollama_proc_rss_mb() -> float:
     for p in psutil.process_iter(attrs=["name", "memory_info"]):
         try:
             n = (p.info.get("name") or "").lower()
-            if "ollama" in n:
-                total += p.info["memory_info"].rss
+            if "ollama" not in n:
+                continue
+            mem = p.info.get("memory_info")
+            # macOS occasionally returns None when the process is being
+            # spawned/torn down between the iter() snapshot and our access.
+            # Treat as 0 rather than crashing the whole bench.
+            if mem is None:
+                continue
+            total += mem.rss
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
     return total / (1024 * 1024)
