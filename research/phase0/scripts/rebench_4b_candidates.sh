@@ -32,8 +32,12 @@ case "$TIER" in
   *)      echo "unknown tier: $TIER (use tier1|all)" >&2; exit 1 ;;
 esac
 
-# Build a "alias=tag" line per candidate.
-mapfile -t LINES < <(
+# Build a "alias=tag" line per candidate. POSIX while-read instead of
+# mapfile so this also works on macOS' system bash 3.2.
+LINES=()
+while IFS= read -r line; do
+  [[ -n "$line" ]] && LINES+=("$line")
+done < <(
   jq -r "[$KEYS] | add | to_entries[] | \"\(.key)=\(.value.ollama_tag)\"" \
     "$CANDIDATES_JSON"
 )
