@@ -52,6 +52,10 @@ pub fn run() {
             commands::delete_prompt,
             commands::reset_prompt,
             commands::extract_dictionary_block,
+            commands::generate_dictionary_candidates,
+            commands::set_clipboard_text,
+            commands::synth_paste,
+            commands::is_external_focused_now,
         ])
         .setup(|app| {
             // Tray
@@ -99,6 +103,11 @@ pub fn run() {
             // fn-key long-press listener (macOS only). Requires Input Monitoring
             // permission; the prompt appears on first run.
             hotkey::start_fn_key_listener(app.handle().clone());
+
+            // Background tracker that emits `focus:external` whenever the user
+            // moves focus from Dictation to another app. The frontend uses
+            // this to fire the synthesised Cmd+V at exactly the right moment.
+            inject::start_focus_tracker(app.handle().clone());
 
             // Open the encrypted DB and seed built-in prompts. Failure here is
             // logged but does not abort startup — the rest of the app

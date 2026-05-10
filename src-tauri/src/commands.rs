@@ -5,7 +5,8 @@ use crate::db::{
     RewriteRecord, BUILTIN_PROMPTS,
 };
 use crate::inject::{
-    get_focused_field_context, is_ax_trusted, FocusedFieldContext, InjectMode, TextInjector,
+    get_focused_field_context, is_ax_trusted, is_external_focused, FocusedFieldContext,
+    InjectMode, TextInjector,
 };
 use crate::llm::{LlmState, ModelInfo, RewriteParams};
 use crate::session::{DictationSession, SessionInfo, SessionStage, SessionState};
@@ -14,7 +15,23 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc;
 
-const REQUIRED_MODELS: &[&str] = &["gemma4:e4b", "gemma4:e2b"];
+// Default candidate set. The wizard considers setup "ready" if at least
+// ONE of these is installed (not all of them) — see check_setup. Order
+// reflects preference for 16GB-RAM CPU daily-driver use:
+//   1. qwen3.5:4b-q4_K_M           — primary, balanced quality/speed
+//   2. qwen3:4b-instruct-2507-q4_K_M — gen-over-gen A/B reference
+//   3. llm-jp-3-3.7b (HF tag)      — JP-specialised alternate
+//   4. gemma4:e4b / e2b            — pre-existing fallbacks
+//
+// qwen3.5:9b is intentionally NOT here — too slow for daily use on 16GB
+// CPU; bench only. See research/phase0/ollama_candidates.json.
+const REQUIRED_MODELS: &[&str] = &[
+    "qwen3.5:4b-q4_K_M",
+    "qwen3:4b-instruct-2507-q4_K_M",
+    "hf.co/alfredplpl/llm-jp-3-3.7b-instruct-gguf:Q4_K_M",
+    "gemma4:e4b",
+    "gemma4:e2b",
+];
 const RING_BUFFER_SIZE: usize = 16000 * 60; // 60 seconds at 16kHz
 
 #[tauri::command]
@@ -291,6 +308,36 @@ pub async fn inject_text(
         .map_err(|e| format!("{e:#}"))
 }
 
+/// Copy text to the system clipboard without synthesising any paste shortcut.
+/// Used by the arm-and-paste flow: copy first, then wait for the user to
+/// move focus, then synth Cmd+V.
+#[tauri::command]
+pub async fn set_clipboard_text(text: String) -> Result<(), String> {
+    TextInjector::set_clipboard(&text).map_err(|e| format!("{e:#}"))
+}
+
+/// Synthesise the Cmd/Ctrl+V paste shortcut on whatever app currently has
+/// focus. Hopped onto the main thread because enigo's macOS HIToolbox path
+/// asserts main-thread.
+#[tauri::command]
+pub async fn synth_paste(app: AppHandle) -> Result<(), String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(TextInjector::synth_paste());
+    })
+    .map_err(|e| format!("run_on_main_thread dispatch: {e}"))?;
+    rx.await
+        .map_err(|e| format!("synth_paste channel closed: {e}"))?
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Whether the current frontmost app is something other than Dictation.
+/// Cached read from the focus tracker; fresh within ~250ms.
+#[tauri::command]
+pub fn is_external_focused_now() -> bool {
+    is_external_focused()
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FocusedContext {
     pub text: String,
@@ -427,8 +474,12 @@ pub async fn check_setup(
     // Check whisper model
     status.whisper_available = resolve_whisper_model_path(&app).is_some();
 
+    // Setup is "ready" if AT LEAST ONE candidate is installed — the user
+    // doesn't need every fallback. This change matters because the candidate
+    // list now spans Qwen3 + Gemma-4 (~2.5GB each); requiring all of them
+    // would force ~5GB of unused download.
     status.ready = status.ollama_running
-        && status.models_missing.is_empty()
+        && !status.models_installed.is_empty()
         && status.whisper_available;
 
     Ok(status)
@@ -562,6 +613,76 @@ pub async fn reset_prompt(
             .map_err(|e| format!("{e:#}")),
         None => Err("DB not initialized".into()),
     }
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct DictionaryCandidate {
+    pub term: String,
+    pub reading: Option<String>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+}
+
+/// Ask the configured LLM to extract dictionary candidates from a recent
+/// ASR-vs-rewrite pair. The user can then check the ones they want and bulk
+/// add them — much faster than hand-typing each entry.
+#[tauri::command]
+pub async fn generate_dictionary_candidates(
+    state: State<'_, LlmState>,
+    model: String,
+    asr_text: String,
+    rewritten_text: String,
+) -> Result<Vec<DictionaryCandidate>, String> {
+    let prompt = format!(
+        "あなたは音声認識ユーザーの辞書登録を補助するアシスタントです。\n\
+         以下の「ASR出力」と「修正後」から、辞書として登録する価値のある\n\
+         候補を抽出してください。\n\
+         \n\
+         抽出ルール(以下のいずれかに該当するものを候補化):\n\
+         1. 修正で表記が変わった固有名詞 → term=修正後、aliases=[ASR側の表記]\n\
+         2. 修正で変わらなくても、ASRに出てくる人名・社名・地名・製品名・略語・\n\
+            専門用語(将来 誤認識される可能性のある語)→ term=その表記、aliases=[]\n\
+         3. 一般的な日本語(普通名詞、動詞、敬語整形、空白・句読点)は無視\n\
+         \n\
+         例:\n\
+         - 入力「田中さんと打ち合わせ」→ 「田中」は普通名詞扱いで除外可。\n\
+           ただし「ARI」「OpenAI」「Tauri」のような社名・固有名は必ず候補に。\n\
+         - ASRで「元橋」、修正後で「本橋」→ {{\"term\":\"本橋\",\"aliases\":[\"元橋\"]}}\n\
+         - ASRで「AR Advanced Technology」(社名)→ 修正不要でも候補に\n\
+           {{\"term\":\"AR Advanced Technology\",\"aliases\":[]}}\n\
+         \n\
+         出力(JSON 配列のみ。コードブロック・説明文・前置き禁止):\n\
+         [{{\"term\":\"...\",\"reading\":\"任意\",\"aliases\":[]}}]\n\
+         該当なしなら []\n\
+         \n\
+         ASR出力:\n{}\n\n\
+         修正後:\n{}\n\n\
+         JSON:",
+        asr_text, rewritten_text
+    );
+
+    let raw = state
+        .runtime
+        .rewrite(RewriteParams {
+            model,
+            prompt,
+            max_new_tokens: 512,
+        })
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+
+    let trimmed = raw.trim();
+    let json_start = trimmed
+        .find('[')
+        .ok_or_else(|| format!("no JSON array in LLM output: {trimmed}"))?;
+    let json_end = trimmed
+        .rfind(']')
+        .ok_or_else(|| format!("no JSON array end in LLM output: {trimmed}"))?
+        + 1;
+    let json_str = &trimmed[json_start..json_end];
+
+    serde_json::from_str::<Vec<DictionaryCandidate>>(json_str)
+        .map_err(|e| format!("parse dictionary candidates: {e} — body: {json_str}"))
 }
 
 /// Build a dictionary block by extracting only entries whose `term`,
@@ -726,5 +847,50 @@ mod tests {
         let entries = vec![dict("本橋", Some("もとはし"), &["元橋"])];
         let out = format_relevant_dictionary(&entries, "hello world", None);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn extract_dictionary_includes_category_and_notes() {
+        let mut e = dict("ARI", None, &["アリ"]);
+        e.category = Some("company".into());
+        e.notes = Some("親会社".into());
+        let out = format_relevant_dictionary(&[e], "今日 ARI に行く", None);
+        assert!(out.contains("ARI"));
+        assert!(out.contains("[company]"));
+        assert!(out.contains("親会社"));
+    }
+
+    #[test]
+    fn extract_dictionary_skips_blank_aliases_and_reading() {
+        // Defensive: blank strings shouldn't hit on every input via .contains("").
+        let mut e = dict("Tauri", Some(""), &["", "tauri"]);
+        e.category = Some("".into());
+        let out = format_relevant_dictionary(&[e], "hello world", None);
+        assert!(out.is_empty(), "blank alias must not match arbitrary text");
+    }
+
+    #[test]
+    fn build_rewrite_prompt_template_without_placeholders_passes_through() {
+        // Regression: a custom user template might omit {context}/{dictionary}.
+        // Output should not crash; missing placeholders simply mean those
+        // values are silently dropped.
+        let out = build_rewrite_prompt(
+            "no placeholders".to_string(),
+            "x".to_string(),
+            Some("ctx".into()),
+            Some("dict".into()),
+        );
+        assert_eq!(out, "no placeholders");
+    }
+
+    #[test]
+    fn build_rewrite_prompt_replaces_multiple_input_occurrences() {
+        let out = build_rewrite_prompt(
+            "echo {input} again {input}".to_string(),
+            "hi".to_string(),
+            None,
+            None,
+        );
+        assert_eq!(out, "echo hi again hi");
     }
 }

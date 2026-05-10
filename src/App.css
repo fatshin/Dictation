@@ -296,6 +296,38 @@ button.recording {
 .edit-form input, .edit-form textarea, .edit-form select {
   font-family: inherit; padding: 0.35rem 0.5rem;
 }
+.link-btn {
+  background: none; border: none; color: #1f6feb; padding: 0.2rem 0;
+  cursor: pointer; text-align: left; font-size: 0.85rem;
+}
+.tag-input {
+  display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center;
+  border: 1px solid #ccc; border-radius: 4px; padding: 0.25rem;
+  background: white;
+}
+.tag-input input {
+  flex: 1; min-width: 6rem; border: none; outline: none; padding: 0.2rem 0.3rem;
+  background: transparent;
+}
+.tag {
+  display: inline-flex; align-items: center; gap: 0.2rem;
+  background: #e6efff; color: #1f4fb8; border-radius: 12px;
+  padding: 0.05rem 0.5rem; font-size: 0.8rem;
+}
+.tag button {
+  background: none; border: none; color: #1f4fb8; cursor: pointer;
+  padding: 0; font-size: 0.95rem; line-height: 1;
+}
+.suggestion-box {
+  border: 1px dashed #1f6feb; border-radius: 6px; padding: 0.6rem;
+  background: #f5f9ff; display: flex; flex-direction: column; gap: 0.4rem;
+}
+.paste-hint {
+  font-size: 0.8rem; color: #1f6feb; margin-left: 0.5rem;
+}
+.paste-hint-success {
+  color: #1f8a3f; font-weight: 600;
+}
 
 @media (prefers-color-scheme: dark) {
   :root { color: #f0f0f0; background-color: #1c1c1e; }
@@ -310,4 +342,9 @@ button.recording {
   .dict-list li, .prompt-list li { border-color: #444; background: #2a2a2c; }
   .badge { background: #444; color: #ddd; }
   .edit-form { background: #2a2a2c; border-color: #444; }
+  .tag-input { background: #2a2a2c; border-color: #555; }
+  .tag { background: #1c3a6f; color: #cfdcff; }
+  .tag button { color: #cfdcff; }
+  .suggestion-box { background: #19233a; border-color: #4a7fdb; }
+  .link-btn { color: #79b8ff; }
 }

@@ -43,7 +43,26 @@ type DictionaryEntry = {
   updated_at: string;
 };
 
-const PREFERRED_MODELS = ["gemma4:e4b", "gemma4:e2b"];
+type DictionaryCandidate = {
+  term: string;
+  reading: string | null;
+  aliases: string[];
+};
+
+// Default candidate ranking for daily-driver use on 16GB-RAM CPU. Order
+// matches research/phase0/ollama_candidates.json `ranked_priority`:
+//   1. qwen3.5:4b-q4_K_M           — primary, ~2.6GB Q4_K_M
+//   2. qwen3:4b-instruct-2507      — gen-over-gen reference
+//   3. llm-jp-3-3.7b               — JP-specialised
+//   4. gemma4:e4b / e2b            — pre-existing fallbacks
+// qwen3.5:9b is bench-only (5.6GB, too slow on 16GB CPU for dictation UX).
+const PREFERRED_MODELS = [
+  "qwen3.5:4b-q4_K_M",
+  "qwen3:4b-instruct-2507-q4_K_M",
+  "hf.co/alfredplpl/llm-jp-3-3.7b-instruct-gguf:Q4_K_M",
+  "gemma4:e4b",
+  "gemma4:e2b",
+];
 const MAX_MODEL_SIZE_GB = 12;
 
 function pickDefaultModel(models: ModelInfo[]): string {
@@ -88,6 +107,17 @@ export default function App() {
   const [prompts, setPrompts] = useState<PromptTemplate[]>([]);
   const [promptId, setPromptId] = useState<string>("");
   const [dictionary, setDictionary] = useState<DictionaryEntry[]>([]);
+  const [dictSuggestions, setDictSuggestions] = useState<DictionaryCandidate[]>([]);
+  const lastAsrRef = useRef<string>("");
+  const lastOutputRef = useRef<string>("");
+
+  // arm-and-paste flow: after Rewrite, the result is in the clipboard and we
+  // wait for the user to focus a non-Dictation app, then synth Cmd+V there.
+  const pendingPasteRef = useRef(false);
+  // null = idle, "armed" = waiting, {app} = success notice (auto-clears).
+  const [pasteStatus, setPasteStatus] = useState<
+    null | "armed" | { kind: "pasted"; app: string }
+  >(null);
   const [input, setInput] = useState<string>(
     "あー、田中さん、明日の打ち合わせなんだけど、30分ずらせる？10時からでお願いしたい。場所は前回と同じでいいかな。じゃ、よろしく。",
   );
@@ -145,9 +175,11 @@ export default function App() {
 
   const modelRef = useRef(model);
   const promptIdRef = useRef(promptId);
+  const promptsRef = useRef<PromptTemplate[]>([]);
   const autoPasteRef = useRef(autoPaste);
   useEffect(() => { modelRef.current = model; }, [model]);
   useEffect(() => { promptIdRef.current = promptId; }, [promptId]);
+  useEffect(() => { promptsRef.current = prompts; }, [prompts]);
   useEffect(() => { autoPasteRef.current = autoPaste; }, [autoPaste]);
 
   async function reloadPrompts() {
@@ -155,14 +187,30 @@ export default function App() {
       const list = await invoke<PromptTemplate[]>("list_prompts");
       setPrompts(list);
       if (list.length > 0 && !list.find((p) => p.id === promptIdRef.current)) {
+        // Prefer the user's last selection (by stable name) → ja_keigo → first.
+        const lastName =
+          (typeof localStorage !== "undefined" &&
+            localStorage.getItem("dictation:lastPromptName")) ||
+          "";
+        const restored =
+          (lastName && list.find((p) => p.name === lastName)) || null;
         const defaultPrompt =
-          list.find((p) => p.name === "ja_keigo") ?? list[0];
+          restored ?? list.find((p) => p.name === "ja_keigo") ?? list[0];
         setPromptId(defaultPrompt.id);
       }
     } catch (e) {
       setError(`list_prompts: ${e}`);
     }
   }
+
+  // Persist the active template's stable name whenever the user picks one.
+  useEffect(() => {
+    if (!promptId) return;
+    const p = prompts.find((x) => x.id === promptId);
+    if (p && typeof localStorage !== "undefined") {
+      localStorage.setItem("dictation:lastPromptName", p.name);
+    }
+  }, [promptId, prompts]);
 
   async function reloadDictionary() {
     try {
@@ -188,7 +236,28 @@ export default function App() {
       setError("no model selected");
       return null;
     }
-    const tmpl = prompts.find((p) => p.id === selectedPromptId);
+
+    // Resolve template via ref (handles stale closures from useEffect[]
+    // listeners) and fall back to a fresh `list_prompts` fetch + ja_keigo
+    // if the cache is empty (initialisation race).
+    let tmpl = promptsRef.current.find((p) => p.id === selectedPromptId);
+    if (!tmpl) {
+      try {
+        const fresh = await invoke<PromptTemplate[]>("list_prompts");
+        promptsRef.current = fresh;
+        setPrompts(fresh);
+        tmpl =
+          fresh.find((p) => p.id === selectedPromptId) ??
+          fresh.find((p) => p.name === "ja_keigo") ??
+          fresh[0];
+        if (tmpl && tmpl.id !== selectedPromptId) {
+          setPromptId(tmpl.id);
+        }
+      } catch (e) {
+        setError(`list_prompts: ${e}`);
+        return null;
+      }
+    }
     if (!tmpl) {
       setError("no prompt template selected");
       return null;
@@ -232,8 +301,7 @@ export default function App() {
         maxNewTokens: 512,
       });
       if (shouldAutoPaste && result?.trim()) {
-        await new Promise((r) => setTimeout(r, 300));
-        await invoke("inject_text", { text: result, mode: "clipboard" });
+        await armAutoPaste(result);
       }
       return result;
     } catch (e) {
@@ -251,10 +319,13 @@ export default function App() {
       const u1 = await listen<string>("llm:token", (e) => {
         if (!cancelled) setOutput((prev) => prev + e.payload);
       });
-      const u2 = await listen<string>("llm:done", () => {
+      const u2 = await listen<string>("llm:done", (e) => {
         if (!cancelled) {
           setStreaming(false);
           setLoading(false);
+          if (typeof e.payload === "string" && e.payload.length > 0) {
+            lastOutputRef.current = e.payload;
+          }
         }
       });
       if (cancelled) {
@@ -292,6 +363,7 @@ export default function App() {
           setRecording(false);
           setTranscript(text);
           setInput(text);
+          lastAsrRef.current = text;
 
           if (text.trim()) {
             const currentModel = modelRef.current;
@@ -405,6 +477,18 @@ export default function App() {
       setRecording(false);
       setTranscript(text);
       setInput(text);
+      lastAsrRef.current = text;
+      // Match fn-long-press / Cmd+Shift+D behaviour: chain Rewrite + auto-paste
+      // automatically. The dedicated Rewrite button is still useful for
+      // re-running after the user edits the Input by hand.
+      if (text.trim() && modelRef.current) {
+        await runRewrite(
+          text,
+          modelRef.current,
+          promptIdRef.current,
+          autoPasteRef.current,
+        );
+      }
     } catch (e) {
       setError(String(e));
       setRecording(false);
@@ -415,14 +499,72 @@ export default function App() {
     return runRewrite(input, model, promptId, autoPaste);
   }
 
-  async function pasteToApp() {
-    if (!output) return;
+  function showPastedNotice(app: string) {
+    setPasteStatus({ kind: "pasted", app });
+    window.setTimeout(() => {
+      setPasteStatus((cur) =>
+        cur && typeof cur === "object" && cur.kind === "pasted" ? null : cur,
+      );
+    }, 2500);
+  }
+
+  async function armAutoPaste(text: string) {
     try {
-      await invoke("inject_text", { text: output, mode: "clipboard" });
+      await invoke("set_clipboard_text", { text });
     } catch (e) {
-      setError(String(e));
+      setError(`set_clipboard_text: ${e}`);
+      return;
+    }
+    pendingPasteRef.current = true;
+    setPasteStatus("armed");
+    // If the user is already focused on something else (e.g. they used fn
+    // long-press from inside ChatGPT and never gave Dictation focus), paste
+    // immediately. Otherwise wait for the next focus:external event.
+    try {
+      const ext = await invoke<boolean>("is_external_focused_now");
+      if (ext && pendingPasteRef.current) {
+        pendingPasteRef.current = false;
+        await invoke("synth_paste");
+        showPastedNotice("外部アプリ");
+      }
+    } catch {
+      // Best-effort; the focus:external listener will catch the paste later.
     }
   }
+
+  async function pasteToApp() {
+    if (!output) return;
+    await armAutoPaste(output);
+  }
+
+  // Paste-on-next-focus-change watcher.
+  useEffect(() => {
+    let cancelled = false;
+    let unsub: UnlistenFn | null = null;
+    listen<string>("focus:external", async (e) => {
+      if (cancelled || !pendingPasteRef.current) return;
+      pendingPasteRef.current = false;
+      try {
+        // Tiny settle so the destination text-field has actually gained
+        // first-responder status before keystrokes land.
+        await new Promise((r) => setTimeout(r, 80));
+        await invoke("synth_paste");
+        const app = typeof e.payload === "string" && e.payload.length > 0
+          ? e.payload
+          : "外部アプリ";
+        showPastedNotice(app);
+      } catch (err) {
+        setError(`synth_paste: ${err}`);
+      }
+    }).then((u) => {
+      if (cancelled) u();
+      else unsub = u;
+    });
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
+  }, []);
 
   async function loadHistory() {
     try {
@@ -522,6 +664,44 @@ export default function App() {
     } catch (e) {
       setError(`reset_prompt: ${e}`);
     }
+  }
+
+  async function suggestDictionaryFromLast() {
+    const asr = lastAsrRef.current.trim() || input.trim();
+    const out = lastOutputRef.current.trim() || output.trim();
+    if (!asr || !out) {
+      setError("候補生成には直近の Input/Output が必要です。録音→修正を1回実行してから試してください。");
+      return;
+    }
+    if (!model) {
+      setError("model 未選択");
+      return;
+    }
+    try {
+      const candidates = await invoke<DictionaryCandidate[]>(
+        "generate_dictionary_candidates",
+        { model, asrText: asr, rewrittenText: out },
+      );
+      setDictSuggestions(candidates);
+      if (candidates.length === 0) {
+        setError("候補は見つかりませんでした(差分が一般的な整形のみの可能性)");
+      }
+    } catch (e) {
+      setError(`generate_dictionary_candidates: ${e}`);
+    }
+  }
+
+  async function acceptSuggestion(c: DictionaryCandidate) {
+    await saveDictionary({
+      term: c.term,
+      reading: c.reading,
+      aliases: c.aliases,
+    });
+    setDictSuggestions((cur) => cur.filter((x) => x !== c));
+  }
+
+  function dismissSuggestion(idx: number) {
+    setDictSuggestions((cur) => cur.filter((_, i) => i !== idx));
   }
 
   async function pullMissingModel() {
@@ -721,7 +901,7 @@ export default function App() {
               <div className="transcript-info">Transcribed from voice input</div>
             )}
             <textarea
-              rows={6}
+              rows={3}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="raw dictation or press Record..."
@@ -729,7 +909,8 @@ export default function App() {
             {models.find((m) => m.name === model && isOversized(m)) && (
               <div className="error">
                 This model exceeds {MAX_MODEL_SIZE_GB} GB — may produce
-                corrupted output due to VRAM limits. Use gemma4:e4b or e2b.
+                corrupted output due to VRAM limits. Use a 4B-class
+                Q4_K_M model (qwen3:4b-instruct-2507-q4_K_M, gemma4:e4b).
               </div>
             )}
             <div className="row" style={{ alignItems: "center" }}>
@@ -744,6 +925,16 @@ export default function App() {
                 />
                 Auto-paste
               </label>
+              {pasteStatus === "armed" && (
+                <span className="paste-hint">
+                  📋 クリップボードに保存。次に開いた入力欄へ自動貼付
+                </span>
+              )}
+              {pasteStatus && typeof pasteStatus === "object" && (
+                <span className="paste-hint paste-hint-success">
+                  ✅ {pasteStatus.app} に貼付しました
+                </span>
+              )}
             </div>
 
             <div className="row">
@@ -759,7 +950,7 @@ export default function App() {
                 </button>
               )}
             </div>
-            <textarea rows={6} readOnly value={output} placeholder="(empty)" />
+            <textarea rows={3} readOnly value={output} placeholder="(empty)" />
             {error && <div className="error">{error}</div>}
           </section>
         </>
@@ -769,8 +960,12 @@ export default function App() {
         <SettingsPanel
           dictionary={dictionary}
           prompts={prompts}
+          suggestions={dictSuggestions}
           onSaveDict={saveDictionary}
           onDeleteDict={removeDictionary}
+          onSuggestFromLast={suggestDictionaryFromLast}
+          onAcceptSuggestion={acceptSuggestion}
+          onDismissSuggestion={dismissSuggestion}
           onSavePrompt={savePrompt}
           onDeletePrompt={removePrompt}
           onResetPrompt={resetPromptToDefault}
@@ -812,10 +1007,14 @@ export default function App() {
 type SettingsProps = {
   dictionary: DictionaryEntry[];
   prompts: PromptTemplate[];
+  suggestions: DictionaryCandidate[];
   onSaveDict: (
     p: Partial<DictionaryEntry> & { term: string },
   ) => Promise<void>;
   onDeleteDict: (id: string) => Promise<void>;
+  onSuggestFromLast: () => Promise<void>;
+  onAcceptSuggestion: (c: DictionaryCandidate) => Promise<void>;
+  onDismissSuggestion: (idx: number) => void;
   onSavePrompt: (p: {
     id?: string;
     name: string;
@@ -850,6 +1049,10 @@ function SettingsPanel(props: SettingsProps) {
           entries={props.dictionary}
           onSave={props.onSaveDict}
           onDelete={props.onDeleteDict}
+          onSuggestFromLast={props.onSuggestFromLast}
+          suggestions={props.suggestions}
+          onAcceptSuggestion={props.onAcceptSuggestion}
+          onDismissSuggestion={props.onDismissSuggestion}
         />
       ) : (
         <PromptEditor
@@ -867,44 +1070,117 @@ function DictionaryEditor(props: {
   entries: DictionaryEntry[];
   onSave: (p: Partial<DictionaryEntry> & { term: string }) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onSuggestFromLast?: () => Promise<void>;
+  suggestions?: DictionaryCandidate[];
+  onAcceptSuggestion?: (c: DictionaryCandidate) => Promise<void>;
+  onDismissSuggestion?: (idx: number) => void;
 }) {
   const [editing, setEditing] = useState<Partial<DictionaryEntry> | null>(null);
-  const [aliasesText, setAliasesText] = useState("");
+  const [aliasInput, setAliasInput] = useState("");
+  const [showDetails, setShowDetails] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
 
   function startEdit(e: DictionaryEntry | null) {
     setEditing(e ?? { term: "", reading: "", aliases: [], category: "", notes: "" });
-    setAliasesText(e?.aliases?.join(", ") ?? "");
+    setAliasInput("");
+    setShowDetails(
+      !!(e && (e.reading || (e.aliases?.length ?? 0) > 0 || e.category || e.notes)),
+    );
+  }
+
+  function addAliasFromInput() {
+    const v = aliasInput.trim();
+    if (!v || !editing) return;
+    const next = [...(editing.aliases ?? [])];
+    if (!next.includes(v)) next.push(v);
+    setEditing({ ...editing, aliases: next });
+    setAliasInput("");
+  }
+
+  function removeAlias(i: number) {
+    if (!editing) return;
+    const next = [...(editing.aliases ?? [])];
+    next.splice(i, 1);
+    setEditing({ ...editing, aliases: next });
   }
 
   async function submit() {
     if (!editing?.term?.trim()) return;
-    const aliases = aliasesText
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
     await props.onSave({
       id: editing.id,
       term: editing.term.trim(),
       reading: editing.reading?.trim() || null,
-      aliases,
+      aliases: editing.aliases ?? [],
       category: editing.category?.trim() || null,
       notes: editing.notes?.trim() || null,
     });
     setEditing(null);
   }
 
+  async function suggest() {
+    if (!props.onSuggestFromLast) return;
+    setSuggesting(true);
+    try {
+      await props.onSuggestFromLast();
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
   return (
     <div className="settings-section">
       <div className="row">
         <h3>辞書 ({props.entries.length})</h3>
-        <button onClick={() => startEdit(null)} style={{ marginLeft: "auto" }}>
-          + 追加
-        </button>
+        {props.onSuggestFromLast && (
+          <button
+            onClick={suggest}
+            disabled={suggesting}
+            style={{ marginLeft: "auto" }}
+            title="直近の Output と Input の差分から辞書候補を自動生成"
+          >
+            {suggesting ? "生成中..." : "🤖 直近から候補生成"}
+          </button>
+        )}
+        <button onClick={() => startEdit(null)}>+ 追加</button>
       </div>
       <p className="hint">
         音声認識の誤認識マッピングや固有名詞の表記をここに登録します。LLM 修正時に
         入力 / 文脈に出現する語のみ自動でプロンプトに差し込まれます。
       </p>
+
+      {props.suggestions && props.suggestions.length > 0 && (
+        <div className="suggestion-box">
+          <div className="row">
+            <strong>候補 ({props.suggestions.length})</strong>
+            <span className="hint" style={{ marginLeft: "auto" }}>
+              ✓ で辞書に追加、× で破棄
+            </span>
+          </div>
+          <ul className="dict-list">
+            {props.suggestions.map((c, idx) => (
+              <li key={`sugg-${idx}`}>
+                <div>
+                  <strong>{c.term}</strong>
+                  {c.reading && <span className="reading"> ({c.reading})</span>}
+                  {c.aliases.length > 0 && (
+                    <span className="hint"> ← {c.aliases.join(", ")}</span>
+                  )}
+                </div>
+                <div className="row">
+                  <button
+                    onClick={() => props.onAcceptSuggestion?.(c)}
+                  >
+                    ✓ 追加
+                  </button>
+                  <button onClick={() => props.onDismissSuggestion?.(idx)}>
+                    ✕
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {props.entries.length === 0 ? (
         <p className="empty">エントリなし</p>
@@ -935,49 +1211,93 @@ function DictionaryEditor(props: {
           <label>
             表記(必須)
             <input
+              autoFocus
               value={editing.term ?? ""}
               onChange={(ev) =>
                 setEditing({ ...editing, term: ev.target.value })
               }
+              placeholder="本橋"
             />
           </label>
-          <label>
-            読み
-            <input
-              value={editing.reading ?? ""}
-              onChange={(ev) =>
-                setEditing({ ...editing, reading: ev.target.value })
-              }
-            />
-          </label>
-          <label>
-            誤認識マッピング(カンマ区切り)
-            <input
-              value={aliasesText}
-              onChange={(ev) => setAliasesText(ev.target.value)}
-              placeholder="元橋, もと橋"
-            />
-          </label>
-          <label>
-            カテゴリ
-            <input
-              value={editing.category ?? ""}
-              onChange={(ev) =>
-                setEditing({ ...editing, category: ev.target.value })
-              }
-              placeholder="person / company / tech / phrase"
-            />
-          </label>
-          <label>
-            メモ
-            <textarea
-              rows={2}
-              value={editing.notes ?? ""}
-              onChange={(ev) =>
-                setEditing({ ...editing, notes: ev.target.value })
-              }
-            />
-          </label>
+
+          <button
+            type="button"
+            className="link-btn"
+            onClick={() => setShowDetails((s) => !s)}
+          >
+            {showDetails ? "▾ 詳細を閉じる" : "▸ 詳細(読み・誤認識・カテゴリ・メモ)"}
+          </button>
+
+          {showDetails && (
+            <>
+              <label>
+                読み
+                <input
+                  value={editing.reading ?? ""}
+                  onChange={(ev) =>
+                    setEditing({ ...editing, reading: ev.target.value })
+                  }
+                  placeholder="もとはし"
+                />
+              </label>
+              <label>
+                誤認識マッピング(Enter または , で追加)
+                <div className="tag-input">
+                  {(editing.aliases ?? []).map((a, i) => (
+                    <span className="tag" key={`${a}-${i}`}>
+                      {a}
+                      <button
+                        type="button"
+                        onClick={() => removeAlias(i)}
+                        aria-label="remove"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    value={aliasInput}
+                    onChange={(ev) => setAliasInput(ev.target.value)}
+                    onKeyDown={(ev) => {
+                      if (ev.key === "Enter" || ev.key === ",") {
+                        ev.preventDefault();
+                        addAliasFromInput();
+                      } else if (
+                        ev.key === "Backspace" &&
+                        !aliasInput &&
+                        (editing.aliases?.length ?? 0) > 0
+                      ) {
+                        removeAlias((editing.aliases?.length ?? 1) - 1);
+                      }
+                    }}
+                    onBlur={addAliasFromInput}
+                    placeholder="元橋"
+                  />
+                </div>
+              </label>
+              <label>
+                カテゴリ
+                <input
+                  value={editing.category ?? ""}
+                  onChange={(ev) =>
+                    setEditing({ ...editing, category: ev.target.value })
+                  }
+                  placeholder="person / company / tech / phrase"
+                />
+              </label>
+              <label>
+                メモ
+                <textarea
+                  rows={2}
+                  value={editing.notes ?? ""}
+                  onChange={(ev) =>
+                    setEditing({ ...editing, notes: ev.target.value })
+                  }
+                />
+              </label>
+            </>
+          )}
+
           <div className="row">
             <button onClick={submit}>保存</button>
             <button onClick={() => setEditing(null)}>キャンセル</button>

@@ -6,6 +6,9 @@ pub use context::{
     ensure_ax_trusted, get_focused_field_context, is_ax_trusted, FocusedFieldContext,
 };
 
+pub mod focus;
+pub use focus::{is_external_focused, start_focus_tracker};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InjectMode {
@@ -24,32 +27,44 @@ impl TextInjector {
     }
 
     fn inject_clipboard(text: &str) -> Result<()> {
+        Self::set_clipboard(text)?;
+        Self::synth_paste()
+    }
+
+    /// Synthesise the platform paste shortcut (Cmd+V on macOS, Ctrl+V on
+    /// Windows). Must be called on the main thread on macOS — enigo's
+    /// HIToolbox path asserts main-thread.
+    pub fn synth_paste() -> Result<()> {
         use enigo::{Enigo, Keyboard, Settings};
 
         let mut enigo = Enigo::new(&Settings::default())
             .map_err(|e| anyhow::anyhow!("enigo init failed: {e}"))?;
 
-        Self::set_clipboard(text)?;
-
         #[cfg(target_os = "macos")]
         {
             use enigo::Key;
-            enigo.key(Key::Meta, enigo::Direction::Press)
+            enigo
+                .key(Key::Meta, enigo::Direction::Press)
                 .map_err(|e| anyhow::anyhow!("key press failed: {e}"))?;
-            enigo.key(Key::Unicode('v'), enigo::Direction::Click)
+            enigo
+                .key(Key::Unicode('v'), enigo::Direction::Click)
                 .map_err(|e| anyhow::anyhow!("key click failed: {e}"))?;
-            enigo.key(Key::Meta, enigo::Direction::Release)
+            enigo
+                .key(Key::Meta, enigo::Direction::Release)
                 .map_err(|e| anyhow::anyhow!("key release failed: {e}"))?;
         }
 
         #[cfg(target_os = "windows")]
         {
             use enigo::Key;
-            enigo.key(Key::Control, enigo::Direction::Press)
+            enigo
+                .key(Key::Control, enigo::Direction::Press)
                 .map_err(|e| anyhow::anyhow!("key press failed: {e}"))?;
-            enigo.key(Key::Unicode('v'), enigo::Direction::Click)
+            enigo
+                .key(Key::Unicode('v'), enigo::Direction::Click)
                 .map_err(|e| anyhow::anyhow!("key click failed: {e}"))?;
-            enigo.key(Key::Control, enigo::Direction::Release)
+            enigo
+                .key(Key::Control, enigo::Direction::Release)
                 .map_err(|e| anyhow::anyhow!("key release failed: {e}"))?;
         }
 
@@ -68,7 +83,7 @@ impl TextInjector {
         Ok(())
     }
 
-    fn set_clipboard(text: &str) -> Result<()> {
+    pub fn set_clipboard(text: &str) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
             use std::process::Command;
