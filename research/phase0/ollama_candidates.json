@@ -12,6 +12,33 @@
     ],
     "api_only": ["qwen3.6-27b"]
   },
+  "bench_outcome": {
+    "ran_on": "M4 Max / unified mem 115GB / Ollama 0.21.0",
+    "bench_date": "2026-05-10",
+    "raw_db": "research/phase0/results/bench_db.sqlite",
+    "summary_md": "research/phase0/results/report.md",
+    "harness_caveats": [
+      "TTFT p50/p95 are inflated by daemon model-swap overhead — multiple Ollama-resident models (qwen3.6:23GB, qwen3-coder:18GB) caused forced eviction during the run. Use the per-model best-1 TTFT (warm-cache) below as the realistic value.",
+      "Peak RAM column sums RSS across every ollama-named process, so it counts other models still resident in keep_alive. The ram_min column in the SQLite is closer to single-model footprint."
+    ],
+    "results_warm_cache": {
+      "gemma4-e4b":              { "quality": 8.45, "warm_ttft_ms": 246,   "tps_max": 51,  "disk_gb": 9.6 },
+      "qwen3.5-9b":              { "quality": 8.36, "warm_ttft_ms": 21446, "tps_max": 31,  "disk_gb": 5.6 },
+      "gemma4-e2b":              { "quality": 8.29, "warm_ttft_ms": 211,   "tps_max": 115, "disk_gb": 7.2 },
+      "qwen3.5-4b":              { "quality": 8.12, "warm_ttft_ms": 762,   "tps_max": 61,  "disk_gb": 2.6 },
+      "qwen3-4b-instruct-2507":  { "quality": 7.72, "warm_ttft_ms": 18104, "tps_max": 56,  "disk_gb": 2.5 },
+      "llm-jp-3-3.7b-instruct":  { "quality": 6.56, "warm_ttft_ms": 1966,  "tps_max": 70,  "disk_gb": 2.3 }
+    },
+    "verdict": {
+      "primary_local_4b": "qwen3.5-4b — quality 8.12 in 2.6GB Apache-2.0 footprint. Quality gap to gemma4-e4b is 0.33pt (4%) but disk is 3.7× smaller and license is permissive.",
+      "api_quality_target": "qwen3.5-9b — quality 8.36, but 21s warm TTFT even on M4 Max means it's not viable locally. Use as the cloud/API quality ceiling.",
+      "rejected": {
+        "qwen3-4b-instruct-2507": "Superseded by qwen3.5-4b (-0.40pt quality at the same size).",
+        "llm-jp-3-3.7b-instruct": "JP-specialised but ranks last on quality (6.56). 1.56pt below qwen3.5-4b — no use case left.",
+        "gemma4-*-as-primary":    "Disk 7.2-9.6GB on Ollama (PLE+audio_encoder bundled) is too heavy for the 16GB-RAM target. Kept only as legacy fallback for users who already pulled it."
+      }
+    }
+  },
   "tier_1_primary": {
     "qwen3.5-4b": {
       "ollama_tag": "qwen3.5:4b-q4_K_M",
