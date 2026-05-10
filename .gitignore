@@ -78,3 +78,10 @@ venv/
 # candle spike build artifacts
 research/phase0/candle_spike/target/
 research/phase0/candle_spike/Cargo.lock
+
+# Playwright
+test-results/
+playwright-report/
+
+# TS build cache
+tsconfig.node.tsbuildinfo
