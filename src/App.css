@@ -205,6 +205,18 @@ button.recording {
   white-space: pre-wrap;
 }
 
+.ok {
+  color: #0a7c2b;
+  font-size: 0.85rem;
+  margin-left: 0.5rem;
+}
+
+.general-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
 .consent {
   text-align: center;
   padding: 2rem;

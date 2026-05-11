@@ -44,6 +44,10 @@ function defaults() {
     externalFocused: false,
     lastClipboard: "",
     synthPasteCount: 0,
+    appSettings: {
+      bypass_llm: false,
+      whisper_initial_prompt: "",
+    },
   };
 }
 
@@ -138,6 +142,15 @@ export async function invoke<T = unknown>(cmd: string, args: any = {}): Promise<
       return null as any;
     case "is_external_focused_now":
       return s.externalFocused as any;
+    case "get_app_settings":
+      return s.appSettings as any;
+    case "update_app_settings":
+      s.appSettings = {
+        bypass_llm: !!args.settings.bypass_llm,
+        whisper_initial_prompt:
+          (args.settings.whisper_initial_prompt as string) ?? "",
+      };
+      return s.appSettings as any;
     case "generate_dictionary_candidates":
       return [] as any;
     case "list_history":

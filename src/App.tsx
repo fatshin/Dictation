@@ -49,6 +49,16 @@ type DictionaryCandidate = {
   aliases: string[];
 };
 
+type AppSettings = {
+  bypass_llm: boolean;
+  whisper_initial_prompt: string;
+};
+
+const DEFAULT_APP_SETTINGS: AppSettings = {
+  bypass_llm: false,
+  whisper_initial_prompt: "",
+};
+
 // Default candidate ranking for daily-driver use on 16GB-RAM CPU. Order
 // matches research/phase0/ollama_candidates.json `ranked_priority`:
 //   1. qwen3.5:4b-q4_K_M           — primary, ~2.6GB Q4_K_M
@@ -130,14 +140,36 @@ export default function App() {
   const [history, setHistory] = useState<RewriteRecord[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [autoPaste, setAutoPaste] = useState(true);
+  const [appSettings, setAppSettings] =
+    useState<AppSettings>(DEFAULT_APP_SETTINGS);
+  const appSettingsRef = useRef<AppSettings>(DEFAULT_APP_SETTINGS);
+  useEffect(() => {
+    appSettingsRef.current = appSettings;
+  }, [appSettings]);
 
   useEffect(() => {
-    invoke<SetupStatus>("check_setup")
-      .then((s) => {
+    let cancelled = false;
+    (async () => {
+      try {
+        // Load app_settings BEFORE marking setup as done. Otherwise the
+        // hotkey listener (registered without a setupDone gate) might fire
+        // while appSettingsRef.current is still DEFAULT_APP_SETTINGS and
+        // sneak the user through the LLM path when they opted into bypass.
+        try {
+          const settings = await invoke<AppSettings>("get_app_settings");
+          if (!cancelled) {
+            setAppSettings(settings);
+            appSettingsRef.current = settings;
+          }
+        } catch {
+          // DB not yet initialised (first run) — defaults are fine.
+        }
+        const s = await invoke<SetupStatus>("check_setup");
+        if (cancelled) return;
         setSetupStatus(s);
         setSetupDone(s.ready);
-      })
-      .catch((e) => {
+      } catch (e) {
+        if (cancelled) return;
         setError(`check_setup: ${String(e)}`);
         setSetupStatus({
           ollama_running: false,
@@ -149,7 +181,11 @@ export default function App() {
           ready: false,
         });
         setSetupDone(false);
-      });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -224,7 +260,25 @@ export default function App() {
     if (setupDone !== true) return;
     reloadPrompts();
     reloadDictionary();
+    reloadAppSettings();
   }, [setupDone]);
+
+  async function reloadAppSettings() {
+    try {
+      const s = await invoke<AppSettings>("get_app_settings");
+      setAppSettings(s);
+    } catch {
+      // DB not initialised yet; keep defaults.
+    }
+  }
+
+  async function saveAppSettings(next: AppSettings) {
+    const saved = await invoke<AppSettings>("update_app_settings", {
+      settings: next,
+    });
+    setAppSettings(saved);
+    return saved;
+  }
 
   async function runRewrite(
     sourceText: string,
@@ -357,25 +411,14 @@ export default function App() {
     listen("hotkey:dictation", async () => {
       if (cancelled) return;
       if (recordingRef.current) {
-        // Stop → Transcribe → Rewrite → Paste (full pipeline)
+        // Stop → Transcribe → (Rewrite or Whisper-only) → Paste
         try {
           const text = await invoke<string>("stop_dictation");
           setRecording(false);
           setTranscript(text);
           setInput(text);
           lastAsrRef.current = text;
-
-          if (text.trim()) {
-            const currentModel = modelRef.current;
-            if (currentModel) {
-              await runRewrite(
-                text,
-                currentModel,
-                promptIdRef.current,
-                autoPasteRef.current,
-              );
-            }
-          }
+          await handleTranscriptCompleted(text);
         } catch (e) {
           setError(String(e));
           setRecording(false);
@@ -430,14 +473,8 @@ export default function App() {
         setRecording(false);
         setTranscript(text);
         setInput(text);
-        if (text.trim() && modelRef.current) {
-          await runRewrite(
-            text,
-            modelRef.current,
-            promptIdRef.current,
-            autoPasteRef.current,
-          );
-        }
+        lastAsrRef.current = text;
+        await handleTranscriptCompleted(text);
       } catch (e) {
         setError(String(e));
         setRecording(false);
@@ -471,6 +508,33 @@ export default function App() {
     }
   }
 
+  /// Common post-ASR step: branch on Whisper-only vs LLM rewrite. Used by
+  /// the stop button, Cmd+Shift+D toggle, and fn long-press release so the
+  /// bypass-LLM setting is honoured uniformly.
+  async function handleTranscriptCompleted(text: string) {
+    if (!text.trim()) return;
+    if (appSettingsRef.current.bypass_llm) {
+      setOutput(text);
+      // Mirror the rewrite path so downstream consumers (e.g. dictionary
+      // candidate generator) see a coherent (asr, output) pair. In bypass
+      // mode the two are intentionally equal — generate_dictionary_candidates
+      // will short-circuit on the equal pair.
+      lastOutputRef.current = text;
+      if (autoPasteRef.current) {
+        await armAutoPaste(text);
+      }
+      return;
+    }
+    if (modelRef.current) {
+      await runRewrite(
+        text,
+        modelRef.current,
+        promptIdRef.current,
+        autoPasteRef.current,
+      );
+    }
+  }
+
   async function stopRecording() {
     try {
       const text = await invoke<string>("stop_dictation");
@@ -478,17 +542,7 @@ export default function App() {
       setTranscript(text);
       setInput(text);
       lastAsrRef.current = text;
-      // Match fn-long-press / Cmd+Shift+D behaviour: chain Rewrite + auto-paste
-      // automatically. The dedicated Rewrite button is still useful for
-      // re-running after the user edits the Input by hand.
-      if (text.trim() && modelRef.current) {
-        await runRewrite(
-          text,
-          modelRef.current,
-          promptIdRef.current,
-          autoPasteRef.current,
-        );
-      }
+      await handleTranscriptCompleted(text);
     } catch (e) {
       setError(String(e));
       setRecording(false);
@@ -671,6 +725,12 @@ export default function App() {
     const out = lastOutputRef.current.trim() || output.trim();
     if (!asr || !out) {
       setError("候補生成には直近の Input/Output が必要です。録音→修正を1回実行してから試してください。");
+      return;
+    }
+    // In bypass-LLM mode `out` is just the raw ASR, so there is no diff
+    // to mine for candidates — the LLM call would be cost-only.
+    if (appSettingsRef.current.bypass_llm || asr === out) {
+      setError("候補生成は LLM 経由の修正結果が必要です。Whisper-only モードでは利用できません。");
       return;
     }
     if (!model) {
@@ -961,6 +1021,7 @@ export default function App() {
           dictionary={dictionary}
           prompts={prompts}
           suggestions={dictSuggestions}
+          appSettings={appSettings}
           onSaveDict={saveDictionary}
           onDeleteDict={removeDictionary}
           onSuggestFromLast={suggestDictionaryFromLast}
@@ -969,6 +1030,7 @@ export default function App() {
           onSavePrompt={savePrompt}
           onDeletePrompt={removePrompt}
           onResetPrompt={resetPromptToDefault}
+          onSaveAppSettings={saveAppSettings}
         />
       )}
 
@@ -1008,6 +1070,7 @@ type SettingsProps = {
   dictionary: DictionaryEntry[];
   prompts: PromptTemplate[];
   suggestions: DictionaryCandidate[];
+  appSettings: AppSettings;
   onSaveDict: (
     p: Partial<DictionaryEntry> & { term: string },
   ) => Promise<void>;
@@ -1024,13 +1087,22 @@ type SettingsProps = {
   }) => Promise<void>;
   onDeletePrompt: (p: PromptTemplate) => Promise<void>;
   onResetPrompt: (p: PromptTemplate) => Promise<void>;
+  onSaveAppSettings: (s: AppSettings) => Promise<AppSettings>;
 };
 
 function SettingsPanel(props: SettingsProps) {
-  const [section, setSection] = useState<"dict" | "prompt">("dict");
+  const [section, setSection] = useState<"general" | "dict" | "prompt">(
+    "general",
+  );
   return (
     <section className="settings">
       <nav className="tabs sub">
+        <button
+          className={section === "general" ? "active" : ""}
+          onClick={() => setSection("general")}
+        >
+          一般
+        </button>
         <button
           className={section === "dict" ? "active" : ""}
           onClick={() => setSection("dict")}
@@ -1044,7 +1116,12 @@ function SettingsPanel(props: SettingsProps) {
           プロンプト
         </button>
       </nav>
-      {section === "dict" ? (
+      {section === "general" ? (
+        <GeneralSettingsEditor
+          settings={props.appSettings}
+          onSave={props.onSaveAppSettings}
+        />
+      ) : section === "dict" ? (
         <DictionaryEditor
           entries={props.dictionary}
           onSave={props.onSaveDict}
@@ -1063,6 +1140,118 @@ function SettingsPanel(props: SettingsProps) {
         />
       )}
     </section>
+  );
+}
+
+// Front-end cap for whisper prompt. Backend hard-caps at 700 chars; keep the
+// UI limit slightly under it so save-time truncation is rare. Visible to the
+// user via textarea maxLength + char counter.
+const WHISPER_PROMPT_MAX = 700;
+
+function GeneralSettingsEditor(props: {
+  settings: AppSettings;
+  onSave: (s: AppSettings) => Promise<AppSettings>;
+}) {
+  const [bypass, setBypass] = useState(props.settings.bypass_llm);
+  const [prompt, setPrompt] = useState(props.settings.whisper_initial_prompt);
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<null | "ok" | "error" | "truncated">(
+    null,
+  );
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+
+  // Sync local form state when the parent's settings change (e.g. after
+  // first DB load). Otherwise the form would stay on its initial defaults
+  // forever. Note: a save also propagates here via the parent setting state,
+  // so a server-side truncation becomes visible on the next render.
+  useEffect(() => {
+    setBypass(props.settings.bypass_llm);
+    setPrompt(props.settings.whisper_initial_prompt);
+  }, [props.settings]);
+
+  async function save() {
+    setSaving(true);
+    setSaveStatus(null);
+    setErrMsg(null);
+    try {
+      const saved = await props.onSave({
+        bypass_llm: bypass,
+        whisper_initial_prompt: prompt,
+      });
+      // Reflect the canonical value the backend stored (it may have
+      // truncated NUL bytes or capped length). Without this the UI would
+      // silently diverge from what's actually persisted.
+      setBypass(saved.bypass_llm);
+      setPrompt(saved.whisper_initial_prompt);
+      const wasTruncated =
+        saved.whisper_initial_prompt !== prompt && prompt.length > 0;
+      setSaveStatus(wasTruncated ? "truncated" : "ok");
+      window.setTimeout(() => setSaveStatus(null), 2500);
+    } catch (e) {
+      setSaveStatus("error");
+      setErrMsg(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const dirty =
+    bypass !== props.settings.bypass_llm ||
+    prompt !== props.settings.whisper_initial_prompt;
+
+  return (
+    <div className="general-settings">
+      <div className="row">
+        <label>
+          <input
+            type="checkbox"
+            checked={bypass}
+            onChange={(e) => setBypass(e.target.checked)}
+          />
+          {" "}LLMをスキップ（Whisperの結果をそのまま貼り付け）
+        </label>
+      </div>
+      <p className="hint">
+        オンの場合、ASR後にLLMによる清書を行わず、Whisperの転写結果をそのまま使用します。
+        メモリ16GB環境やLLMモデル未導入時に有効。
+        <br />
+        ⚠️ LLMスキップ時は<strong>辞書タブの登録は使われません</strong>。
+        語彙ヒントは下の「Whisper初期プロンプト」に列挙してください。
+        <br />
+        ⚠️ 設定変更は<strong>次回録音から</strong>有効です（録音中の変更は現在の文字起こしには適用されません）。
+      </p>
+
+      <div className="row">
+        <label>Whisper 初期プロンプト（語彙ヒント）</label>
+        <span className="hint" style={{ marginLeft: "auto" }}>
+          {prompt.length}/{WHISPER_PROMPT_MAX}
+        </span>
+      </div>
+      <textarea
+        rows={3}
+        value={prompt}
+        maxLength={WHISPER_PROMPT_MAX}
+        onChange={(e) => setPrompt(e.target.value)}
+        placeholder="例: Dictation, WhisperKit, Tauri, Ollama, ARI, OpenAI"
+      />
+      <p className="hint">
+        固有名詞や専門用語を列挙すると認識精度が上がります。Whisperは末尾の約224トークンしか
+        利用しないため、簡潔に。文体例（句読点スタイル等）も誘導可能。
+      </p>
+
+      <div className="row">
+        <button onClick={save} disabled={!dirty || saving}>
+          {saving ? "保存中…" : "保存"}
+        </button>
+        {saveStatus === "ok" && <span className="ok">✅ 保存しました</span>}
+        {saveStatus === "truncated" && (
+          <span className="hint">
+            ✅ 保存しました（長さ・制御文字を調整しました）
+          </span>
+        )}
+        {saveStatus === "error" && <span className="error">⚠️ {errMsg}</span>}
+      </div>
+    </div>
   );
 }
 

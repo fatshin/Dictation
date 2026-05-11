@@ -1,7 +1,7 @@
 use crate::asr::{resolve_whisper_model_path, AsrState, WhisperAsr};
 use crate::audio::AudioConfig;
 use crate::db::{
-    DbState, DictionaryEntry, DictionaryUpsert, PromptTemplate, PromptTemplateUpsert,
+    AppSettings, DbState, DictionaryEntry, DictionaryUpsert, PromptTemplate, PromptTemplateUpsert,
     RewriteRecord, BUILTIN_PROMPTS,
 };
 use crate::inject::{
@@ -182,6 +182,7 @@ pub async fn stop_dictation(
     app: AppHandle,
     session_state: State<'_, SessionState>,
     asr_state: State<'_, AsrState>,
+    db_state: State<'_, DbState>,
 ) -> Result<String, String> {
     // We'll clear the session at the end regardless of outcome
     struct ClearSession<'a>(&'a SessionState);
@@ -232,6 +233,17 @@ pub async fn stop_dictation(
         stage: SessionStage::Transcribing,
     });
 
+    // Pull current Whisper initial prompt from settings (vocabulary bias).
+    // Failure to read is non-fatal: ASR works without a prompt.
+    let whisper_prompt: String = {
+        let guard = db_state.db.lock().await;
+        guard
+            .as_ref()
+            .and_then(|db| db.get_app_settings().ok())
+            .map(|s| s.whisper_initial_prompt)
+            .unwrap_or_default()
+    };
+
     // Transcribe (CPU-blocking, must use spawn_blocking)
     let whisper_arc: Arc<WhisperAsr> = {
         let guard = asr_state.whisper.lock().map_err(|e| format!("{e}"))?;
@@ -246,6 +258,13 @@ pub async fn stop_dictation(
             whisper_rs::SamplingStrategy::Greedy { best_of: 1 },
         );
         params.set_language(Some("ja"));
+        // Defence-in-depth: even if old DB rows contain '\0' (pre-sanitise),
+        // never hand them to whisper_rs — it will panic. Empty string after
+        // filtering is a no-op (skip set_initial_prompt entirely).
+        let sanitised: String = whisper_prompt.chars().filter(|c| *c != '\0').collect();
+        if !sanitised.is_empty() {
+            params.set_initial_prompt(&sanitised);
+        }
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);
@@ -432,6 +451,7 @@ pub struct SetupStatus {
 pub async fn check_setup(
     app: AppHandle,
     state: State<'_, LlmState>,
+    db_state: State<'_, DbState>,
 ) -> Result<SetupStatus, String> {
     let mut status = SetupStatus {
         ollama_running: false,
@@ -443,7 +463,19 @@ pub async fn check_setup(
         ready: false,
     };
 
-    // Check Ollama
+    // Try to read user setting up-front so we can short-circuit the LLM
+    // checks if the user opted into Whisper-only mode. Failure to read is
+    // non-fatal — fall through to the normal LLM-required gate.
+    let bypass_llm: bool = {
+        let guard = db_state.db.lock().await;
+        guard
+            .as_ref()
+            .and_then(|db| db.get_app_settings().ok())
+            .map(|s| s.bypass_llm)
+            .unwrap_or(false)
+    };
+
+    // Check Ollama (still useful info even in bypass mode for the settings UI)
     match reqwest::get("http://127.0.0.1:11434/api/version").await {
         Ok(resp) => {
             status.ollama_running = true;
@@ -451,36 +483,49 @@ pub async fn check_setup(
                 status.ollama_version = body["version"].as_str().map(|s| s.to_string());
             }
         }
-        Err(_) => return Ok(status),
-    }
-
-    // Check models
-    match state.runtime.list_models().await {
-        Ok(models) => {
-            let installed: Vec<String> = models.iter().map(|m| m.name.clone()).collect();
-            for &required in REQUIRED_MODELS {
-                if installed.iter().any(|n| n == required) {
-                    status.models_installed.push(required.to_string());
-                } else {
-                    status.models_missing.push(required.to_string());
-                }
+        Err(_) => {
+            // In LLM mode this is a hard stop; in bypass mode the user
+            // explicitly doesn't need Ollama, so continue checking Whisper.
+            if !bypass_llm {
+                return Ok(status);
             }
         }
-        Err(_) => {
-            status.models_missing = REQUIRED_MODELS.iter().map(|s| s.to_string()).collect();
+    }
+
+    // Check models (only meaningful when Ollama is reachable)
+    if status.ollama_running {
+        match state.runtime.list_models().await {
+            Ok(models) => {
+                let installed: Vec<String> = models.iter().map(|m| m.name.clone()).collect();
+                for &required in REQUIRED_MODELS {
+                    if installed.iter().any(|n| n == required) {
+                        status.models_installed.push(required.to_string());
+                    } else {
+                        status.models_missing.push(required.to_string());
+                    }
+                }
+            }
+            Err(_) => {
+                status.models_missing = REQUIRED_MODELS.iter().map(|s| s.to_string()).collect();
+            }
         }
+    } else {
+        status.models_missing = REQUIRED_MODELS.iter().map(|s| s.to_string()).collect();
     }
 
     // Check whisper model
     status.whisper_available = resolve_whisper_model_path(&app).is_some();
 
     // Setup is "ready" if AT LEAST ONE candidate is installed — the user
-    // doesn't need every fallback. This change matters because the candidate
-    // list now spans Qwen3 + Gemma-4 (~2.5GB each); requiring all of them
-    // would force ~5GB of unused download.
-    status.ready = status.ollama_running
-        && !status.models_installed.is_empty()
-        && status.whisper_available;
+    // doesn't need every fallback. In Whisper-only (bypass_llm) mode the
+    // LLM requirement is dropped entirely; only the whisper model matters.
+    status.ready = if bypass_llm {
+        status.whisper_available
+    } else {
+        status.ollama_running
+            && !status.models_installed.is_empty()
+            && status.whisper_available
+    };
 
     Ok(status)
 }
@@ -611,6 +656,31 @@ pub async fn reset_prompt(
         Some(db) => db
             .reset_prompt_template(&id, BUILTIN_PROMPTS)
             .map_err(|e| format!("{e:#}")),
+        None => Err("DB not initialized".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn get_app_settings(state: State<'_, DbState>) -> Result<AppSettings, String> {
+    let guard = state.db.lock().await;
+    match guard.as_ref() {
+        Some(db) => db.get_app_settings().map_err(|e| format!("{e:#}")),
+        None => Err("DB not initialized".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn update_app_settings(
+    state: State<'_, DbState>,
+    settings: AppSettings,
+) -> Result<AppSettings, String> {
+    let guard = state.db.lock().await;
+    match guard.as_ref() {
+        Some(db) => {
+            db.update_app_settings(&settings)
+                .map_err(|e| format!("{e:#}"))?;
+            db.get_app_settings().map_err(|e| format!("{e:#}"))
+        }
         None => Err("DB not initialized".into()),
     }
 }

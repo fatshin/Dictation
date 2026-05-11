@@ -155,4 +155,59 @@ test.describe("regression suite", () => {
     await page.getByRole("button", { name: /consent/i }).click();
     await expect(page.locator("[data-task-select]")).toContainText("English");
   });
+
+  test("R10: Whisper-only mode bypasses LLM and pastes the raw ASR", async ({
+    page,
+  }) => {
+    // Seed bypass_llm=true so the post-ASR helper takes the no-LLM path.
+    // The asrResult/rewriteResult are deliberately different so we can
+    // assert which one ends up in Output / clipboard.
+    await page.addInitScript(() => {
+      window.__E2E_STATE = {
+        ...(window.__E2E_STATE ?? {}),
+        appSettings: {
+          bypass_llm: true,
+          whisper_initial_prompt: "WhisperKit, Tauri, ARI",
+        },
+        asrResult: "raw whisper transcript",
+        rewriteResult: "should not appear",
+      };
+    });
+    await gotoMainUI(page);
+
+    await page.getByRole("button", { name: /^Record$/ }).click();
+    await page.getByRole("button", { name: /Stop Recording/ }).click();
+
+    // Output must contain the raw ASR, NOT the LLM rewrite.
+    const output = page.getByPlaceholder("(empty)");
+    await expect(output).toHaveValue("raw whisper transcript");
+
+    // rewrite_streaming must NOT have been called.
+    const log = await page.evaluate(() => window.__E2E_LOG ?? []);
+    const calledRewrite = log.some((e) => e.cmd === "rewrite_streaming");
+    expect(calledRewrite).toBe(false);
+
+    // Clipboard armed with the raw transcript.
+    const clipboard = await page.evaluate(() => window.__E2E_STATE.lastClipboard);
+    expect(clipboard).toBe("raw whisper transcript");
+  });
+
+  test("R11: Settings → General tab saves bypass_llm + whisper prompt", async ({
+    page,
+  }) => {
+    await gotoMainUI(page);
+    await page.getByRole("button", { name: "Settings" }).click();
+    // The "一般" sub-tab is the default → form is already visible.
+    await page.getByLabel(/LLMをスキップ/).check();
+    await page
+      .locator('textarea[placeholder*="WhisperKit"]')
+      .fill("Tauri, Ollama, WhisperKit");
+    await page.getByRole("button", { name: /^保存$/ }).click();
+
+    // Backend mock echoes the saved value back into state.appSettings.
+    await expect(page.getByText(/✅ 保存しました/)).toBeVisible();
+    const saved = await page.evaluate(() => window.__E2E_STATE.appSettings);
+    expect(saved.bypass_llm).toBe(true);
+    expect(saved.whisper_initial_prompt).toBe("Tauri, Ollama, WhisperKit");
+  });
 });

@@ -56,6 +56,8 @@ pub fn run() {
             commands::set_clipboard_text,
             commands::synth_paste,
             commands::is_external_focused_now,
+            commands::get_app_settings,
+            commands::update_app_settings,
         ])
         .setup(|app| {
             // Tray

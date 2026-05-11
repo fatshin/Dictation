@@ -76,6 +76,28 @@ pub struct PromptTemplateUpsert {
     pub language: String,
 }
 
+/// Single-row global app settings. Persisted in `app_settings` table with
+/// `id = 1` invariant. Add new fields here + bump migration block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppSettings {
+    /// Skip the LLM rewrite pipeline entirely. When true, the raw Whisper
+    /// transcript is fed straight to the paste/inject path.
+    pub bypass_llm: bool,
+    /// Initial prompt passed to whisper_rs::FullParams::set_initial_prompt.
+    /// Used for vocabulary biasing (proper nouns, technical terms, style).
+    /// Whisper truncates to ~224 tokens internally, so keep this short.
+    pub whisper_initial_prompt: String,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            bypass_llm: false,
+            whisper_initial_prompt: String::new(),
+        }
+    }
+}
+
 pub struct EncryptedDb {
     conn: Connection,
 }
@@ -148,6 +170,13 @@ impl EncryptedDb {
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS app_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                bypass_llm INTEGER NOT NULL DEFAULT 0,
+                whisper_initial_prompt TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_transcripts_session ON transcripts(session_id);
             CREATE INDEX IF NOT EXISTS idx_rewrites_session ON rewrites(session_id);
             CREATE INDEX IF NOT EXISTS idx_transcripts_created ON transcripts(created_at);
@@ -155,8 +184,10 @@ impl EncryptedDb {
             CREATE INDEX IF NOT EXISTS idx_dictionary_term ON dictionary(term);
             CREATE INDEX IF NOT EXISTS idx_dictionary_category ON dictionary(category);
             CREATE INDEX IF NOT EXISTS idx_prompt_template_lang ON prompt_template(language);
+            INSERT OR IGNORE INTO app_settings (id) VALUES (1);
             INSERT OR IGNORE INTO schema_version (version) VALUES (1);
-            INSERT OR IGNORE INTO schema_version (version) VALUES (2);",
+            INSERT OR IGNORE INTO schema_version (version) VALUES (2);
+            INSERT OR IGNORE INTO schema_version (version) VALUES (3);",
         )?;
         Ok(())
     }
@@ -473,6 +504,57 @@ impl EncryptedDb {
             })
         })?;
         Ok(row)
+    }
+
+    // ----- App settings (single-row) -----
+
+    pub fn get_app_settings(&self) -> Result<AppSettings> {
+        let row = self.conn.query_row(
+            "SELECT bypass_llm, whisper_initial_prompt FROM app_settings WHERE id = 1",
+            [],
+            |r| {
+                let bypass: i64 = r.get(0)?;
+                let prompt: String = r.get(1)?;
+                Ok((bypass != 0, prompt))
+            },
+        );
+        match row {
+            Ok((bypass_llm, whisper_initial_prompt)) => Ok(AppSettings {
+                bypass_llm,
+                whisper_initial_prompt,
+            }),
+            // Row missing (shouldn't happen after migration, but be defensive).
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(AppSettings::default()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn update_app_settings(&self, s: &AppSettings) -> Result<()> {
+        let now = chrono_now();
+        // Sanitise + cap the whisper prompt:
+        //   1. Strip NUL bytes — whisper_rs::set_initial_prompt panics on
+        //      embedded NULs, and they have no semantic role here.
+        //   2. Cap at 700 chars (NOT bytes). Whisper only consumes ~224 tokens
+        //      anyway; the cap is mainly to keep DB rows small and prevent
+        //      pathological UI input. char-based truncation is required
+        //      because Japanese is multibyte and a byte-slice cut would
+        //      panic on a UTF-8 boundary.
+        let prompt: String = s
+            .whisper_initial_prompt
+            .chars()
+            .filter(|c| *c != '\0')
+            .take(700)
+            .collect();
+        self.conn.execute(
+            "INSERT INTO app_settings (id, bypass_llm, whisper_initial_prompt, updated_at)
+             VALUES (1, ?1, ?2, ?3)
+             ON CONFLICT(id) DO UPDATE SET
+                bypass_llm = excluded.bypass_llm,
+                whisper_initial_prompt = excluded.whisper_initial_prompt,
+                updated_at = excluded.updated_at",
+            rusqlite::params![s.bypass_llm as i64, prompt, now],
+        )?;
+        Ok(())
     }
 }
 
