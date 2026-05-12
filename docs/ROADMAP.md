@@ -36,17 +36,25 @@ Runs end-to-end on the developer's machine. Split into two sub-phases to de-risk
 - Consent UI before first recording
 - macOS local builds (unsigned)
 
-### Phase 1b — Windows parity (**~2 weeks**, was 3)
+### Phase 1b — Windows parity (**~7-9 weeks**, honest re-estimate)
 
-- Windows x86 with `whisper-rs` (CPU/CUDA) + candle (CPU/CUDA)
-- Windows keystore integration (DPAPI + TPM)
-- Windows text injection (UI Automation)
-- Windows local builds (unsigned)
-- Cross-platform regression pass
-- **Deferred**: Snapdragon X / Windows-ARM NPU acceleration. candle has no
-  QNN/DirectML backend as of 0.9.x; the CPU-only fallback may miss the
-  TTFT hard line on 3-4B INT4 models. See ADR-001 §Costs for the open
-  decision (ship degraded / add ONNX-only path / defer Windows ARM).
+Detailed plan: [WINDOWS_PLAN.md](WINDOWS_PLAN.md).
+
+Phases W0-W8:
+- W0: Build green on Windows CI (2-3 d)
+- W1: Whisper-only path end-to-end (1 wk)
+- W2: Global hotkey + right-Ctrl PTT analogue (3-5 d)
+- W3: UI Automation for focused-field context (1-2 wk)
+- W4: DPAPI keystore (3-5 d)
+- W5: Focus tracking + arm-and-paste (3-5 d)
+- W6: Ollama Windows x64 / ARM64 integration (1 wk)
+- W7: MSI + OV code-signing (1-2 wk, includes cert lead time)
+- W8: Cross-platform regression pass (3-5 d)
+
+The original "~2 weeks" estimate assumed the Windows-side modules
+already existed; in reality they are stubs. The Windows-ARM NPU
+acceleration caveat from ADR-001 remains open and is tracked in
+WR-1 of WINDOWS_PLAN.md.
 
 No distribution yet. No public release.
 
@@ -57,19 +65,45 @@ No distribution yet. No public release.
 - Per-app tone switching (detect foreground app, apply rewrite style)
 - Better IME interop handling
 
-## Phase 3 — Meeting and long-form (1–2 weeks)
+## Phase 3 — Meeting and long-form (5–7 weeks, honest re-estimate)
 
-- Import meeting audio files (m4a, mp3, wav)
-- Long-context summarization (leverage SmolLM3-3B's 128K context)
+Detailed plan: [SYSTEM_AUDIO_CAPTURE_PLAN.md](SYSTEM_AUDIO_CAPTURE_PLAN.md).
+
+Headline feature: **system audio loopback capture** (PLAUD AI-style)
+so meeting audio from Zoom / Teams / Meet can be transcribed
+alongside the mic, all on-device. Phases S0-S5:
+
+- S0: macOS ScreenCaptureKit + Windows WASAPI loopback spike (3-5 d)
+- S1: dual-source capture in the real app (1-2 wk)
+- S2: per-stream transcription + time-sorted merge (1 wk)
+- S3: UI + consent dialog + recording-state visibility (1 wk)
+- S4: meeting-minutes + action-items LLM templates (3-5 d)
+- S5: file import (m4a, mp3, wav) (3-5 d)
+
+Other Phase 3 items rolled in:
+- Long-context summarization (leverage 128K-context models)
 - Full-text history search with SQLite FTS5
 - Export to Markdown / clipboard only (no network export)
 
-## Phase 4 — Signed distribution (2–3 weeks)
+The dominant risk for this phase is legal (consent for recording
+remote parties), not technical. See SYSTEM_AUDIO_CAPTURE_PLAN.md
+§ legal+ethical for the disclaimer flow.
 
-- macOS: Developer ID + Notarization → `.dmg`
-- Windows: code signing → `.msix`
-- Auto-update channel (Sparkle / Tauri updater, signature-verified)
-- Public release
+## Phase 4 — Signed distribution (3–5 weeks, honest re-estimate)
+
+Detailed plans:
+- macOS: [MAC_PACKAGING.md](MAC_PACKAGING.md) — phases M0-M7
+  (Developer Program enrolment → notarised universal DMG → Tauri 2
+  auto-updater → Homebrew Cask).
+- Windows: [WINDOWS_PLAN.md](WINDOWS_PLAN.md) § W7 — OV code-signing
+  cert + MSI bundle + Tauri 2 updater on the same Ed25519 channel.
+
+Both sides share the auto-update Ed25519 signing key (single channel,
+single `latest.json` per platform).
+
+Cert procurement is the long-lead item on both sides:
+- Apple Developer Program: 24-72 h enrolment.
+- Windows OV cert: 1-4 weeks. Start in parallel with Phase 1b W3.
 
 ## Non-goals
 

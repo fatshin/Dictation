@@ -1,6 +1,9 @@
 # ADR-004 — Primary local LLM: switch from Gemma-4 to Qwen3.5-4B
 
-- **Status**: Accepted (2026-05-11)
+- **Status**: **Superseded by ADR-005** (2026-05-12). Retained as the
+  audit trail for the model-selection reasoning that the next-day
+  re-bench overturned. See ADR-005 for the current decision.
+- **Status (original)**: Accepted (2026-05-11)
 - **Scope**: Primary Ollama model for the dictation rewrite pipeline.
   Supersedes ADR-002's model selection only; the Ollama runtime itself
   (HTTP sidecar, reqwest client) is unchanged.
