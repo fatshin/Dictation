@@ -913,40 +913,48 @@ export default function App() {
 
       {tab === "rewrite" && (
         <>
-          <section className="row">
-            <label>
-              Model:&nbsp;
-              <select data-model-select value={model} onChange={(e) => setModel(e.target.value)}>
-                {models.length === 0 && <option value="">(loading...)</option>}
-                {models.map((m) => (
-                  <option
-                    key={m.name}
-                    value={m.name}
-                    style={isOversized(m) ? { color: "#999" } : undefined}
-                  >
-                    {m.name} — {(m.size_bytes / 1e9).toFixed(1)} GB
-                    {m.quantization ? ` (${m.quantization})` : ""}
-                    {isOversized(m) ? " [too large]" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Task:&nbsp;
-              <select
-                data-task-select
-                value={promptId}
-                onChange={(e) => setPromptId(e.target.value)}
-              >
-                {prompts.length === 0 && <option value="">(loading...)</option>}
-                {prompts.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label} {p.is_builtin ? "" : "(custom)"}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </section>
+          {appSettings.bypass_llm ? (
+            <section className="row">
+              <span className="hint">
+                Whisper-only モード有効 — LLM 後処理をスキップ中。Settings → 一般 で切替可能。
+              </span>
+            </section>
+          ) : (
+            <section className="row">
+              <label>
+                Model:&nbsp;
+                <select data-model-select value={model} onChange={(e) => setModel(e.target.value)}>
+                  {models.length === 0 && <option value="">(loading...)</option>}
+                  {models.map((m) => (
+                    <option
+                      key={m.name}
+                      value={m.name}
+                      style={isOversized(m) ? { color: "#999" } : undefined}
+                    >
+                      {m.name} — {(m.size_bytes / 1e9).toFixed(1)} GB
+                      {m.quantization ? ` (${m.quantization})` : ""}
+                      {isOversized(m) ? " [too large]" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Task:&nbsp;
+                <select
+                  data-task-select
+                  value={promptId}
+                  onChange={(e) => setPromptId(e.target.value)}
+                >
+                  {prompts.length === 0 && <option value="">(loading...)</option>}
+                  {prompts.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label} {p.is_builtin ? "" : "(custom)"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </section>
+          )}
 
           <section className="io">
             <div className="row">

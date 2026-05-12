@@ -61,6 +61,7 @@ pub async fn rewrite_text(
             model,
             prompt,
             max_new_tokens: max_new_tokens.unwrap_or(512),
+            keep_alive: None,
         })
         .await
         .map_err(|e| format!("{e:#}"))
@@ -80,6 +81,7 @@ pub async fn rewrite_streaming(
         model,
         prompt,
         max_new_tokens: max_new_tokens.unwrap_or(512),
+        keep_alive: None,
     };
 
     let app_clone = app.clone();
@@ -758,6 +760,7 @@ pub async fn generate_dictionary_candidates(
             model,
             prompt,
             max_new_tokens: 512,
+            keep_alive: None,
         })
         .await
         .map_err(|e| format!("{e:#}"))?;

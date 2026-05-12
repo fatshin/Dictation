@@ -18,6 +18,10 @@ pub struct RewriteParams {
     pub model: String,
     pub prompt: String,
     pub max_new_tokens: u32,
+    /// Ollama keep_alive in seconds. -1 = keep forever, 0 = evict
+    /// immediately after response. None uses Ollama's default (5 min).
+    #[serde(default)]
+    pub keep_alive: Option<i64>,
 }
 
 #[async_trait::async_trait]
@@ -77,6 +81,8 @@ struct GenerateRequest<'a> {
     stream: bool,
     think: bool,
     options: GenerateOptions,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    keep_alive: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -129,6 +135,7 @@ impl LlmRuntime for OllamaRuntime {
                 temperature: 0.0,
                 num_predict: params.max_new_tokens,
             },
+            keep_alive: params.keep_alive,
         };
         let resp = self
             .http
@@ -161,6 +168,7 @@ impl LlmRuntime for OllamaRuntime {
                 temperature: 0.0,
                 num_predict: params.max_new_tokens,
             },
+            keep_alive: params.keep_alive,
         };
         let resp = self
             .http
