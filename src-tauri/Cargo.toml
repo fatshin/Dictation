@@ -33,8 +33,13 @@ scopeguard = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 futures-util = "0.3"
 
-# ASR
-whisper-rs = { version = "0.16", features = ["metal"] }
+# ASR — Metal is macOS-only. Linux/Windows fall through to the
+# whisper-rs CPU backend (default features), and CUDA/Vulkan can be
+# opt-in via cargo --features later for the gaming-tier Windows
+# target. The previous unconditional ["metal"] feature caused
+# whisper.cpp's CMakeLists to call find_library on Metal even on
+# Linux/Windows, which obviously fails.
+whisper-rs = { version = "0.16", default-features = false }
 cpal = "0.15"
 earshot = "1.1"
 rubato = "2.0"
@@ -47,11 +52,13 @@ enigo = "0.6"
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher"] }
 
 # macOS keystore + CGEventTap (fn key) + Accessibility API (focused field context)
+# + whisper-rs with the Metal backend.
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"
 core-foundation = "0.10"
 core-graphics = "0.24"
 accessibility-sys = "0.1"
+whisper-rs = { version = "0.16", default-features = false, features = ["metal"] }
 
 [profile.release]
 opt-level = 3
