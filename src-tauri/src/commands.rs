@@ -662,6 +662,26 @@ pub async fn reset_prompt(state: State<'_, DbState>, id: String) -> Result<Promp
 }
 
 #[tauri::command]
+pub async fn get_autostart(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch()
+        .is_enabled()
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub async fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let mgr = app.autolaunch();
+    if enabled {
+        mgr.enable().map_err(|e| format!("{e:#}"))?;
+    } else {
+        mgr.disable().map_err(|e| format!("{e:#}"))?;
+    }
+    mgr.is_enabled().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
 pub async fn get_app_settings(state: State<'_, DbState>) -> Result<AppSettings, String> {
     let guard = state.db.lock().await;
     match guard.as_ref() {

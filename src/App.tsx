@@ -1157,11 +1157,18 @@ function GeneralSettingsEditor(props: {
 }) {
   const [bypass, setBypass] = useState(props.settings.bypass_llm);
   const [prompt, setPrompt] = useState(props.settings.whisper_initial_prompt);
+  const [autostart, setAutostart] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<null | "ok" | "error" | "truncated">(
     null,
   );
   const [errMsg, setErrMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke<boolean>("get_autostart")
+      .then(setAutostart)
+      .catch(() => {});
+  }, []);
 
   // Sync local form state when the parent's settings change (e.g. after
   // first DB load). Otherwise the form would stay on its initial defaults
@@ -1240,6 +1247,32 @@ function GeneralSettingsEditor(props: {
       <p className="hint">
         固有名詞や専門用語を列挙すると認識精度が上がります。Whisperは末尾の約224トークンしか
         利用しないため、簡潔に。文体例（句読点スタイル等）も誘導可能。
+      </p>
+
+      <hr style={{ margin: "0.75rem 0", borderColor: "#e0e0e0" }} />
+
+      <div className="row">
+        <label>
+          <input
+            type="checkbox"
+            checked={autostart}
+            onChange={async (e) => {
+              try {
+                const result = await invoke<boolean>("set_autostart", {
+                  enabled: e.target.checked,
+                });
+                setAutostart(result);
+              } catch {
+                // Autostart not supported or failed silently.
+              }
+            }}
+          />
+          {" "}ログイン時に自動起動
+        </label>
+      </div>
+      <p className="hint">
+        有効にすると、Mac/Windows のログイン時にバックグラウンドで起動します。
+        ウィンドウを閉じてもトレイに常駐し、fn 長押し / Ctrl+Shift+D でいつでも録音可能。
       </p>
 
       <div className="row">

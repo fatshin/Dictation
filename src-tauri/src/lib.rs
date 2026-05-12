@@ -16,14 +16,18 @@ use session::SessionState;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Emitter, Manager,
+    Emitter, Manager, RunEvent, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(LlmState::new())
         .manage(AsrState::new())
         .manage(DbState::new())
@@ -58,6 +62,8 @@ pub fn run() {
             commands::is_external_focused_now,
             commands::get_app_settings,
             commands::update_app_settings,
+            commands::get_autostart,
+            commands::set_autostart,
         ])
         .setup(|app| {
             // Tray
@@ -137,6 +143,25 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if let RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } = &event
+        {
+            if label == "main" {
+                // Hide instead of quit so the app stays in the tray.
+                // The user can restore via the tray "Show Dictation" item
+                // or quit explicitly via "Quit".
+                api.prevent_close();
+                if let Some(w) = app_handle.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            }
+        }
+    });
 }

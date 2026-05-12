@@ -151,6 +151,10 @@ export async function invoke<T = unknown>(cmd: string, args: any = {}): Promise<
           (args.settings.whisper_initial_prompt as string) ?? "",
       };
       return s.appSettings as any;
+    case "get_autostart":
+      return false as any;
+    case "set_autostart":
+      return !!args.enabled as any;
     case "generate_dictionary_candidates":
       return [] as any;
     case "list_history":
