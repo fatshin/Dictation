@@ -166,6 +166,7 @@ impl EncryptedDb {
                 language TEXT NOT NULL DEFAULT 'ja',
                 is_builtin INTEGER NOT NULL DEFAULT 0,
                 order_idx INTEGER NOT NULL DEFAULT 0,
+                body_hash TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -192,23 +193,46 @@ impl EncryptedDb {
         Ok(())
     }
 
-    /// Seed built-in prompt templates if missing. Idempotent: existing rows
-    /// with the same `name` are left alone (so user edits are preserved).
+    /// Seed built-in prompt templates. On first install, inserts all
+    /// defaults. On subsequent launches, updates body+label only if the
+    /// user has NOT manually edited the template (detected via body_hash).
     ///
-    /// TODO(phase-b1.1): when we ship a new built-in body, INSERT OR IGNORE
-    /// will skip the update on existing installs and users will be stuck on
-    /// the old body until they hit "reset". Need a migration strategy: either
-    /// store body_hash + force-overwrite when unedited, or bump
-    /// schema_version with a one-shot REPLACE pass.
+    /// The `body_hash` column stores the SHA-256 of the *shipped* body at
+    /// the time it was last seeded. When the user edits the body through
+    /// the UI, `upsert_prompt_template` clears `body_hash` to NULL,
+    /// signalling "user-modified — do not overwrite on next seed".
     pub fn seed_builtin_prompts(&self, defaults: &[(&str, &str, &str, &str)]) -> Result<()> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        fn quick_hash(s: &str) -> String {
+            let mut h = DefaultHasher::new();
+            s.hash(&mut h);
+            format!("{:016x}", h.finish())
+        }
+
         let tx = self.conn.unchecked_transaction()?;
         for (idx, (name, label, body, language)) in defaults.iter().enumerate() {
             let id = format!("builtin_{name}");
+            let hash = quick_hash(body);
+            // INSERT if new. If already exists AND body_hash matches the
+            // previously-seeded hash (= user hasn't edited), update the
+            // body+label to the new shipped version.
+            // body_hash IS NOT NULL means the user hasn't edited the
+            // body via the UI (upsert_prompt_template clears it to NULL
+            // on user edits). Safe to overwrite with the new shipped body.
             tx.execute(
-                "INSERT OR IGNORE INTO prompt_template
-                 (id, name, label, body, language, is_builtin, order_idx)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)",
-                rusqlite::params![id, name, label, body, language, idx as i32],
+                "INSERT INTO prompt_template
+                 (id, name, label, body, language, is_builtin, order_idx, body_hash)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7)
+                 ON CONFLICT(id) DO UPDATE SET
+                     label = excluded.label,
+                     body = excluded.body,
+                     language = excluded.language,
+                     order_idx = excluded.order_idx,
+                     body_hash = excluded.body_hash,
+                     updated_at = datetime('now')
+                 WHERE prompt_template.body_hash IS NOT NULL",
+                rusqlite::params![id, name, label, body, language, idx as i32, hash],
             )?;
         }
         tx.commit()?;
@@ -402,14 +426,17 @@ impl EncryptedDb {
             .clone()
             .unwrap_or_else(|| format!("user_{}", uuid::Uuid::new_v4()));
         let now = chrono_now();
+        // Clear body_hash on user edits so seed_builtin_prompts won't
+        // overwrite the user's customisation on next launch.
         self.conn.execute(
-            "INSERT INTO prompt_template (id, name, label, body, language, is_builtin, order_idx, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 0, 99, ?6, ?6)
+            "INSERT INTO prompt_template (id, name, label, body, language, is_builtin, order_idx, body_hash, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, 99, NULL, ?6, ?6)
              ON CONFLICT(id) DO UPDATE SET
                  name=excluded.name,
                  label=excluded.label,
                  body=excluded.body,
                  language=excluded.language,
+                 body_hash=NULL,
                  updated_at=excluded.updated_at",
             rusqlite::params![
                 id,
@@ -475,12 +502,17 @@ impl EncryptedDb {
             .iter()
             .find(|(n, _, _, _)| *n == name)
             .ok_or_else(|| anyhow::anyhow!("no shipped default for builtin '{name}'"))?;
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        body.hash(&mut h);
+        let hash = format!("{:016x}", h.finish());
         let now = chrono_now();
         self.conn.execute(
             "UPDATE prompt_template
-             SET label = ?2, body = ?3, language = ?4, updated_at = ?5
+             SET label = ?2, body = ?3, language = ?4, body_hash = ?5, updated_at = ?6
              WHERE id = ?1",
-            rusqlite::params![id, label, body, language, now],
+            rusqlite::params![id, label, body, language, hash, now],
         )?;
         let mut stmt = self.conn.prepare(
             "SELECT id, name, label, body, language, is_builtin, order_idx, created_at, updated_at
