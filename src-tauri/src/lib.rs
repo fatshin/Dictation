@@ -89,9 +89,10 @@ pub fn run() {
             let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyD);
 
             let handle = app.handle().clone();
-            app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, _event| {
-                let _ = handle.emit("hotkey:dictation", ());
-            })?;
+            app.global_shortcut()
+                .on_shortcut(shortcut, move |_app, _shortcut, _event| {
+                    let _ = handle.emit("hotkey:dictation", ());
+                })?;
 
             // Trigger the Accessibility permission prompt on first run.
             // Without this, AXValue calls return None silently and the user

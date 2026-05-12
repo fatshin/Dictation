@@ -77,7 +77,8 @@ impl TextInjector {
         let mut enigo = Enigo::new(&Settings::default())
             .map_err(|e| anyhow::anyhow!("enigo init failed: {e}"))?;
 
-        enigo.text(text)
+        enigo
+            .text(text)
             .map_err(|e| anyhow::anyhow!("text injection failed: {e}"))?;
 
         Ok(())

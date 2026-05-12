@@ -390,10 +390,7 @@ impl EncryptedDb {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
-    pub fn upsert_prompt_template(
-        &self,
-        payload: &PromptTemplateUpsert,
-    ) -> Result<PromptTemplate> {
+    pub fn upsert_prompt_template(&self, payload: &PromptTemplateUpsert) -> Result<PromptTemplate> {
         if !payload.body.contains("{input}") {
             anyhow::bail!("prompt template must contain {{input}} placeholder");
         }

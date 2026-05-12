@@ -38,9 +38,7 @@ pub struct OllamaRuntime {
 
 impl OllamaRuntime {
     pub fn new(base: impl Into<String>) -> Self {
-        let http = reqwest::Client::builder()
-            .build()
-            .expect("reqwest client");
+        let http = reqwest::Client::builder().build().expect("reqwest client");
         Self {
             base: base.into(),
             http,

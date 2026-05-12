@@ -5,8 +5,8 @@ use crate::db::{
     RewriteRecord, BUILTIN_PROMPTS,
 };
 use crate::inject::{
-    get_focused_field_context, is_ax_trusted, is_external_focused, FocusedFieldContext,
-    InjectMode, TextInjector,
+    get_focused_field_context, is_ax_trusted, is_external_focused, FocusedFieldContext, InjectMode,
+    TextInjector,
 };
 use crate::llm::{LlmState, ModelInfo, RewriteParams};
 use crate::session::{DictationSession, SessionInfo, SessionStage, SessionState};
@@ -215,7 +215,9 @@ pub async fn stop_dictation(
                     return Err("No audio captured".to_string());
                 }
                 let mut buf = Vec::with_capacity(available);
-                let chunk = consumer.read_chunk(available).map_err(|e| format!("read_chunk: {e:?}"))?;
+                let chunk = consumer
+                    .read_chunk(available)
+                    .map_err(|e| format!("read_chunk: {e:?}"))?;
                 let (first, second) = chunk.as_slices();
                 buf.extend_from_slice(first);
                 buf.extend_from_slice(second);
@@ -226,12 +228,19 @@ pub async fn stop_dictation(
         }
     };
 
-    log::info!("audio: captured {} samples ({:.1}s at 16kHz)", samples.len(), samples.len() as f64 / 16000.0);
+    log::info!(
+        "audio: captured {} samples ({:.1}s at 16kHz)",
+        samples.len(),
+        samples.len() as f64 / 16000.0
+    );
 
-    let _ = app.emit("session:state", SessionInfo {
-        id: String::new(),
-        stage: SessionStage::Transcribing,
-    });
+    let _ = app.emit(
+        "session:state",
+        SessionInfo {
+            id: String::new(),
+            stage: SessionStage::Transcribing,
+        },
+    );
 
     // Pull current Whisper initial prompt from settings (vocabulary bias).
     // Failure to read is non-fatal: ASR works without a prompt.
@@ -254,9 +263,8 @@ pub async fn stop_dictation(
     };
     let transcript = tokio::task::spawn_blocking(move || {
         let ctx = &whisper_arc.ctx;
-        let mut params = whisper_rs::FullParams::new(
-            whisper_rs::SamplingStrategy::Greedy { best_of: 1 },
-        );
+        let mut params =
+            whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 1 });
         params.set_language(Some("ja"));
         // Defence-in-depth: even if old DB rows contain '\0' (pre-sanitise),
         // never hand them to whisper_rs — it will panic. Empty string after
@@ -270,9 +278,11 @@ pub async fn stop_dictation(
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
 
-        let mut state = ctx.create_state()
+        let mut state = ctx
+            .create_state()
             .map_err(|e| format!("whisper state: {e}"))?;
-        state.full(params, &samples)
+        state
+            .full(params, &samples)
             .map_err(|e| format!("whisper transcribe: {e}"))?;
 
         let n = state.full_n_segments();
@@ -300,11 +310,7 @@ pub async fn stop_dictation(
 }
 
 #[tauri::command]
-pub async fn inject_text(
-    app: AppHandle,
-    text: String,
-    mode: Option<String>,
-) -> Result<(), String> {
+pub async fn inject_text(app: AppHandle, text: String, mode: Option<String>) -> Result<(), String> {
     let inject_mode = match mode.as_deref() {
         Some("direct") => InjectMode::Direct,
         _ => InjectMode::Clipboard,
@@ -522,9 +528,7 @@ pub async fn check_setup(
     status.ready = if bypass_llm {
         status.whisper_available
     } else {
-        status.ollama_running
-            && !status.models_installed.is_empty()
-            && status.whisper_available
+        status.ollama_running && !status.models_installed.is_empty() && status.whisper_available
     };
 
     Ok(status)
@@ -563,12 +567,15 @@ pub async fn pull_model(app: AppHandle, model: String) -> Result<(), String> {
                 let status = val["status"].as_str().unwrap_or("").to_string();
                 let total = val["total"].as_u64().unwrap_or(0);
                 let completed = val["completed"].as_u64().unwrap_or(0);
-                let _ = app.emit("model:pull:progress", serde_json::json!({
-                    "model": &model,
-                    "status": status,
-                    "total": total,
-                    "completed": completed,
-                }));
+                let _ = app.emit(
+                    "model:pull:progress",
+                    serde_json::json!({
+                        "model": &model,
+                        "status": status,
+                        "total": total,
+                        "completed": completed,
+                    }),
+                );
             }
         }
     }
@@ -601,10 +608,7 @@ pub async fn upsert_dictionary_entry(
 }
 
 #[tauri::command]
-pub async fn delete_dictionary_entry(
-    state: State<'_, DbState>,
-    id: String,
-) -> Result<(), String> {
+pub async fn delete_dictionary_entry(state: State<'_, DbState>, id: String) -> Result<(), String> {
     let guard = state.db.lock().await;
     match guard.as_ref() {
         Some(db) => db.delete_dictionary(&id).map_err(|e| format!("{e:#}")),
@@ -647,10 +651,7 @@ pub async fn delete_prompt(state: State<'_, DbState>, id: String) -> Result<(), 
 }
 
 #[tauri::command]
-pub async fn reset_prompt(
-    state: State<'_, DbState>,
-    id: String,
-) -> Result<PromptTemplate, String> {
+pub async fn reset_prompt(state: State<'_, DbState>, id: String) -> Result<PromptTemplate, String> {
     let guard = state.db.lock().await;
     match guard.as_ref() {
         Some(db) => db
@@ -772,7 +773,11 @@ pub async fn extract_dictionary_block(
             None => return Ok(String::new()),
         }
     };
-    Ok(format_relevant_dictionary(&entries, &input, context.as_deref()))
+    Ok(format_relevant_dictionary(
+        &entries,
+        &input,
+        context.as_deref(),
+    ))
 }
 
 /// Pure helper, kept testable. Returns a multi-line bullet list or empty.
@@ -834,12 +839,8 @@ mod tests {
 
     #[test]
     fn build_rewrite_prompt_substitutes_input() {
-        let out = build_rewrite_prompt(
-            "INPUT={input}".to_string(),
-            "hello".to_string(),
-            None,
-            None,
-        );
+        let out =
+            build_rewrite_prompt("INPUT={input}".to_string(), "hello".to_string(), None, None);
         assert_eq!(out, "INPUT=hello");
     }
 

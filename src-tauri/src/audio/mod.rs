@@ -34,11 +34,7 @@ impl AudioCapture {
         }
     }
 
-    pub fn start(
-        &mut self,
-        producer: rtrb::Producer<f32>,
-        config: AudioConfig,
-    ) -> Result<()> {
+    pub fn start(&mut self, producer: rtrb::Producer<f32>, config: AudioConfig) -> Result<()> {
         let host = cpal::default_host();
         let device = host
             .default_input_device()
@@ -107,7 +103,10 @@ impl AudioCapture {
                         }
                         let remaining = to_write - first_len;
                         if remaining > 0 {
-                            for (slot, &sample) in second.iter_mut().zip(output[first_len..first_len + remaining].iter()) {
+                            for (slot, &sample) in second
+                                .iter_mut()
+                                .zip(output[first_len..first_len + remaining].iter())
+                            {
                                 slot.write(sample);
                             }
                         }
