@@ -85,3 +85,7 @@ playwright-report/
 
 # TS build cache
 tsconfig.node.tsbuildinfo
+tsconfig.tsbuildinfo
+research/phase0/results/*.sqlite-shm
+research/phase0/results/*.sqlite-wal
+research/phase0/recordings/
