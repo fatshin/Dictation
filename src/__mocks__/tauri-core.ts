@@ -45,7 +45,7 @@ function defaults() {
     lastClipboard: "",
     synthPasteCount: 0,
     appSettings: {
-      bypass_llm: false,
+      bypass_llm: true,
       whisper_initial_prompt: "",
     },
   };

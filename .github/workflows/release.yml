@@ -21,6 +21,9 @@ on:
         type: boolean
         default: true
 
+permissions:
+  contents: write
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
@@ -83,7 +86,7 @@ jobs:
       # works. CI=true tells the bundler to skip codesign when no
       # certificate is present.
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v0.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI: "true"

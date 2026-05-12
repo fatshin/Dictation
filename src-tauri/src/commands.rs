@@ -476,11 +476,16 @@ pub async fn check_setup(
     // non-fatal — fall through to the normal LLM-required gate.
     let bypass_llm: bool = {
         let guard = db_state.db.lock().await;
-        guard
-            .as_ref()
-            .and_then(|db| db.get_app_settings().ok())
-            .map(|s| s.bypass_llm)
-            .unwrap_or(true)
+        match guard.as_ref() {
+            Some(db) => db.get_app_settings().map(|s| s.bypass_llm).unwrap_or_else(|e| {
+                log::warn!("check_setup: get_app_settings failed ({e:#}), defaulting to bypass_llm=true");
+                true
+            }),
+            None => {
+                log::info!("check_setup: DB not initialised, defaulting to bypass_llm=true");
+                true
+            }
+        }
     };
 
     // Check Ollama (still useful info even in bypass mode for the settings UI)

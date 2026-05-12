@@ -202,13 +202,17 @@ export default function App() {
 
   useEffect(() => {
     if (setupDone !== true) return;
-    invoke<ModelInfo[]>("list_models")
-      .then((m) => {
-        setModels(m);
-        setModel(pickDefaultModel(m));
-      })
-      .catch((e) => setError(`list_models: ${e}`));
-  }, [setupDone]);
+    // In bypass mode, Ollama may not be running — don't surface
+    // list_models errors to avoid confusing Whisper-only users.
+    if (!appSettings.bypass_llm) {
+      invoke<ModelInfo[]>("list_models")
+        .then((m) => {
+          setModels(m);
+          setModel(pickDefaultModel(m));
+        })
+        .catch((e) => setError(`list_models: ${e}`));
+    }
+  }, [setupDone, appSettings.bypass_llm]);
 
   const unlistenRef = useRef<UnlistenFn[]>([]);
 
@@ -1265,13 +1269,16 @@ function GeneralSettingsEditor(props: {
             type="checkbox"
             checked={autostart}
             onChange={async (e) => {
+              const want = e.target.checked;
               try {
                 const result = await invoke<boolean>("set_autostart", {
-                  enabled: e.target.checked,
+                  enabled: want,
                 });
                 setAutostart(result);
-              } catch {
-                // Autostart not supported or failed silently.
+              } catch (err) {
+                setAutostart(!want);
+                setErrMsg(`自動起動の設定に失敗しました: ${err}`);
+                setSaveStatus("error");
               }
             }}
           />
