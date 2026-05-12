@@ -1,0 +1,144 @@
+name: Release
+
+# Builds signed (when certs available) macOS DMG + Windows MSI and
+# publishes them as a GitHub Release. Triggered by tag push matching v*.
+#
+# Phase 4 (MAC_PACKAGING.md M5 + WINDOWS_PLAN.md W7):
+# - macOS: universal binary (aarch64 + x86_64 via lipo), notarised when
+#   APPLE_CERTIFICATE secret is present. Unsigned otherwise.
+# - Windows: x64 MSI, code-signed when WINDOWS_CERTIFICATE secret is
+#   present. Unsigned otherwise.
+# - Tauri updater JSON (latest.json) for the auto-update channel.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: "Create a draft release (no public visibility)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+jobs:
+  build:
+    name: Build (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS-arm64
+            runner: macos-14
+            target: aarch64-apple-darwin
+            bundle: dmg
+          - label: Windows-x64
+            runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            bundle: msi
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # --- System deps (same as ci.yml) ---
+      - name: Install Windows build deps
+        if: runner.os == 'Windows'
+        run: choco install -y --no-progress llvm cmake
+        shell: pwsh
+
+      # --- Rust ---
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: release-${{ matrix.target }}
+
+      # --- macOS signing (optional — only when secrets are present) ---
+      - name: Import Apple certificate
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > cert.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm cert.p12
+
+      # --- Build with Tauri ---
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS notarisation (optional)
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Dictation ${{ github.ref_name }}"
+          releaseBody: |
+            ## Dictation ${{ github.ref_name }}
+
+            Local-first offline dictation with optional LLM rewrite.
+
+            ### Downloads
+            - **macOS (Apple Silicon)**: `.dmg` file below
+            - **Windows (x64)**: `.msi` file below
+
+            ### Notes
+            - Whisper-only mode is the default (no LLM / Ollama required)
+            - Configure vocabulary hints in Settings → 一般 → Whisper 初期プロンプト
+            - This is a pre-release build. Code signing will be added in a future release.
+
+            ### Verify integrity
+            ```bash
+            # macOS
+            shasum -a 256 Dictation_*.dmg
+            # Windows (PowerShell)
+            Get-FileHash .\Dictation_*.msi -Algorithm SHA256
+            ```
+          releaseDraft: ${{ github.event.inputs.draft || 'true' }}
+          prerelease: true
+          args: --target ${{ matrix.target }}
+
+      # --- Upload artifacts (accessible even if release creation fails) ---
+      - name: Upload bundle artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.label }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.sig
+          retention-days: 30

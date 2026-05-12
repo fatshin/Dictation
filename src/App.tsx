@@ -54,8 +54,11 @@ type AppSettings = {
   whisper_initial_prompt: string;
 };
 
+// ADR-005: Whisper-only is the default. bypass_llm=true means the app
+// works without Ollama / LLM models — critical for Windows where the
+// DB/keystore isn't initialised yet and get_app_settings returns an error.
 const DEFAULT_APP_SETTINGS: AppSettings = {
-  bypass_llm: false,
+  bypass_llm: true,
   whisper_initial_prompt: "",
 };
 

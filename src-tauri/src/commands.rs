@@ -478,7 +478,7 @@ pub async fn check_setup(
             .as_ref()
             .and_then(|db| db.get_app_settings().ok())
             .map(|s| s.bypass_llm)
-            .unwrap_or(false)
+            .unwrap_or(true)
     };
 
     // Check Ollama (still useful info even in bypass mode for the settings UI)
