@@ -282,6 +282,10 @@ def _read_model_repo_revision(alias: str, model_dir: Path) -> tuple[str, str]:
             m = json.loads(manifest_path.read_text())
             entry = m.get(alias)
             if isinstance(entry, dict):
+                manifest_repo = entry.get("repo_id")
+                if isinstance(manifest_repo, str) and manifest_repo:
+                    # Prefer manifest metadata over static registry mapping.
+                    repo = manifest_repo
                 revision = str(entry.get("revision", ""))
         except Exception:
             revision = ""

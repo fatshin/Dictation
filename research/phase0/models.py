@@ -149,6 +149,26 @@ def verify_sha256(model_dir: Path, manifest: dict[str, str]) -> bool:
     return True
 
 
+def _manifest_files(entry: dict) -> dict[str, str]:
+    """Return the file-hash map from either legacy or metadata-rich manifest entries."""
+    if not isinstance(entry, dict):
+        return {}
+    files = entry.get("files")
+    if isinstance(files, dict):
+        return {str(k): str(v) for k, v in files.items()}
+    if "repo_id" in entry or "revision" in entry:
+        # Metadata shape without file hashes is incomplete; avoid treating
+        # metadata keys as file paths.
+        return {}
+    # Legacy format: alias -> {relative_path: sha256}
+    return {str(k): str(v) for k, v in entry.items()}
+
+
+def _manifest_entry_has_hashes(entry: dict) -> bool:
+    """Return True when manifest entry includes at least one file hash."""
+    return bool(_manifest_files(entry))
+
+
 def _peak_rss_mb() -> float:
     import psutil
 
@@ -228,17 +248,27 @@ def _cmd_download(args: argparse.Namespace) -> None:
     if targets is None:
         raise SystemExit(f"unknown tier: {args.tier}")
 
-    manifest: dict[str, dict[str, str]] = {}
+    manifest: dict[str, dict] = {}
     if MANIFEST_PATH.exists():
         manifest = json.loads(MANIFEST_PATH.read_text())
 
     for alias, repo in targets.items():
         dest = MODELS_DIR / alias
         print(f"downloading {alias} ({repo}) -> {dest}")
-        resolved = download(repo, dest)
-        manifest[alias] = build_manifest(resolved)
+        revision = ""
+        try:
+            revision = str(check_existence(repo).get("revision") or "")
+        except (SystemExit, Exception):
+            # Don't block downloads on metadata API failures.
+            revision = ""
+        resolved = download(repo, dest, revision=revision or None)
+        manifest[alias] = {
+            "repo_id": repo,
+            "revision": revision,
+            "files": build_manifest(resolved),
+        }
         MANIFEST_PATH.write_text(json.dumps(manifest, indent=2))
-        print(f"wrote manifest entry for {alias} ({len(manifest[alias])} files)")
+        print(f"wrote manifest entry for {alias} ({len(_manifest_files(manifest[alias]))} files)")
 
 
 def _cmd_smoke(args: argparse.Namespace) -> None:
@@ -258,7 +288,11 @@ def _cmd_verify(args: argparse.Namespace) -> None:
         if not entry:
             print(f"{alias}: NO MANIFEST")
             continue
-        ok = verify_sha256(MODELS_DIR / alias, entry)
+        if not _manifest_entry_has_hashes(entry):
+            print(f"{alias}: INCOMPLETE MANIFEST (no file hashes)")
+            print(f"{alias}: FAIL")
+            continue
+        ok = verify_sha256(MODELS_DIR / alias, _manifest_files(entry))
         print(f"{alias}: {'OK' if ok else 'FAIL'}")
 
 
