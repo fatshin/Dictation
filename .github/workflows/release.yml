@@ -1,14 +1,11 @@
 name: Release
 
-# Builds signed (when certs available) macOS DMG + Windows MSI and
-# publishes them as a GitHub Release. Triggered by tag push matching v*.
+# Builds signed macOS DMG + Windows MSI and publishes them as a GitHub
+# Release. Triggered by tag push matching v*.
 #
-# Phase 4 (MAC_PACKAGING.md M5 + WINDOWS_PLAN.md W7):
-# - macOS: universal binary (aarch64 + x86_64 via lipo), notarised when
-#   APPLE_CERTIFICATE secret is present. Unsigned otherwise.
-# - Windows: x64 MSI, code-signed when WINDOWS_CERTIFICATE secret is
-#   present. Unsigned otherwise.
-# - Tauri updater JSON (latest.json) for the auto-update channel.
+# macOS: code-signed + notarised when APPLE_CERTIFICATE secret is present.
+# Windows: Authenticode-signed when WINDOWS_CERTIFICATE secret is present.
+# Both fall back to unsigned builds when certs are absent.
 
 on:
   push:
@@ -63,7 +60,7 @@ jobs:
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
-      # --- System deps (same as ci.yml) ---
+      # --- System deps ---
       - name: Install Windows build deps
         if: runner.os == 'Windows'
         run: choco install -y --no-progress llvm cmake
@@ -79,17 +76,65 @@ jobs:
           workspaces: src-tauri -> target
           key: release-${{ matrix.target }}
 
+      # --- macOS: import signing certificate ---
+      - name: Import Apple certificate
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_PATH=$RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+          rm -f "$CERT_PATH"
+
+      # --- Windows: import Authenticode certificate ---
+      - name: Import Windows certificate
+        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != ''
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: pwsh
+        run: |
+          $certBytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          $certPath = Join-Path $env:RUNNER_TEMP "certificate.pfx"
+          [IO.File]::WriteAllBytes($certPath, $certBytes)
+
+          $securePassword = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          Import-PfxCertificate -FilePath $certPath -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword
+
+          $thumbprint = (Get-PfxCertificate -FilePath $certPath -Password $securePassword).Thumbprint
+          echo "WINDOWS_CERT_THUMBPRINT=$thumbprint" >> $env:GITHUB_ENV
+
+          Remove-Item $certPath
+
       # --- Build with Tauri ---
-      # macOS signing is deferred to Phase 4 (MAC_PACKAGING.md M1-M2).
-      # For now we build unsigned bundles. Gatekeeper will show the
-      # "developer cannot be verified" warning, but right-click → Open
-      # works. CI=true tells the bundler to skip codesign when no
-      # certificate is present.
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI: "true"
+          # macOS signing + notarisation
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows Authenticode
+          TAURI_WINDOWS_SIGN_COMMAND: ${{ runner.os == 'Windows' && env.WINDOWS_CERT_THUMBPRINT != '' && format('signtool.exe sign /sha1 {0} /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "%1"', env.WINDOWS_CERT_THUMBPRINT) || '' }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Dictation ${{ github.ref_name }}"
@@ -105,7 +150,6 @@ jobs:
             ### Notes
             - Whisper-only mode is the default (no LLM / Ollama required)
             - Configure vocabulary hints in Settings → 一般 → Whisper 初期プロンプト
-            - This is a pre-release build. Code signing will be added in a future release.
 
             ### Verify integrity
             ```bash
@@ -118,7 +162,16 @@ jobs:
           prerelease: true
           args: --target ${{ matrix.target }}
 
-      # --- Upload artifacts (accessible even if release creation fails) ---
+      # --- Cleanup macOS keychain ---
+      - name: Cleanup keychain
+        if: runner.os == 'macOS' && always()
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain-db
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+
+      # --- Upload artifacts ---
       - name: Upload bundle artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -126,5 +179,6 @@ jobs:
           path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*.sig
           retention-days: 30
