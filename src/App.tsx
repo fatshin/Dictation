@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import "./App.css";
 
 type ModelInfo = {
@@ -1302,6 +1304,85 @@ function GeneralSettingsEditor(props: {
         )}
         {saveStatus === "error" && <span className="error">⚠️ {errMsg}</span>}
       </div>
+
+      <hr style={{ margin: "0.75rem 0", borderColor: "#e0e0e0" }} />
+      <UpdateSection />
+    </div>
+  );
+}
+
+function UpdateSection() {
+  const [checking, setChecking] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<
+    null | "none" | "available" | "error"
+  >(null);
+  const [updateVersion, setUpdateVersion] = useState("");
+  const [updateError, setUpdateError] = useState("");
+  const [updateRef, setUpdateRef] = useState<Awaited<ReturnType<typeof check>> | null>(null);
+
+  async function checkForUpdate() {
+    setChecking(true);
+    setUpdateStatus(null);
+    setUpdateError("");
+    try {
+      const update = await check();
+      if (update) {
+        setUpdateStatus("available");
+        setUpdateVersion(update.version);
+        setUpdateRef(update);
+      } else {
+        setUpdateStatus("none");
+      }
+    } catch (e) {
+      setUpdateStatus("error");
+      setUpdateError(String(e));
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function installUpdate() {
+    if (!updateRef) return;
+    setInstalling(true);
+    try {
+      await updateRef.downloadAndInstall();
+      await relaunch();
+    } catch (e) {
+      setUpdateError(String(e));
+      setUpdateStatus("error");
+      setInstalling(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="row" style={{ alignItems: "center" }}>
+        <strong>アップデート</strong>
+        <button
+          onClick={checkForUpdate}
+          disabled={checking || installing}
+          style={{ marginLeft: "auto" }}
+        >
+          {checking ? "確認中…" : "アップデートを確認"}
+        </button>
+      </div>
+      {updateStatus === "none" && (
+        <p className="hint">最新バージョンです。</p>
+      )}
+      {updateStatus === "available" && (
+        <div>
+          <p className="hint">
+            新しいバージョン <strong>v{updateVersion}</strong> が利用可能です。
+          </p>
+          <button onClick={installUpdate} disabled={installing}>
+            {installing ? "インストール中…" : `v${updateVersion} をインストール`}
+          </button>
+        </div>
+      )}
+      {updateStatus === "error" && (
+        <p className="error">アップデート確認に失敗: {updateError}</p>
+      )}
     </div>
   );
 }

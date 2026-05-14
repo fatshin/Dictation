@@ -1,6 +1,6 @@
 [package]
 name = "dictation"
-version = "0.0.1"
+version = "0.0.3"
 description = "Offline dictation + LLM rewrite (macOS / Windows). Phase 1a scaffold per ADR-001 + ADR-002."
 authors = ["Motohashi Shinichi <fatshin@gmail.com>"]
 edition = "2021"
@@ -17,6 +17,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-global-shortcut = "2.3"
 tauri-plugin-autostart = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"

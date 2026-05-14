@@ -58,6 +58,14 @@ pub fn resolve_whisper_model_path(app: &tauri::AppHandle) -> Option<std::path::P
         }
     }
 
+    // Bundled resource (shipped inside the installer)
+    if let Ok(resource) = app.path().resource_dir() {
+        let p = resource.join("models").join("ggml-small.bin");
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
     if let Ok(local) = app.path().app_local_data_dir() {
         let p = local.join("models").join("ggml-small.bin");
         if p.exists() {

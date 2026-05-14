@@ -120,12 +120,24 @@ jobs:
 
           Remove-Item $certPath
 
+      # --- Download Whisper model for bundling ---
+      - name: Download Whisper model
+        shell: bash
+        run: |
+          mkdir -p src-tauri/models
+          if [ ! -f src-tauri/models/ggml-small.bin ]; then
+            curl -L --retry 3 --retry-delay 10 -o src-tauri/models/ggml-small.bin \
+              "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+          fi
+          ls -lh src-tauri/models/ggml-small.bin
+
       # --- Build with Tauri ---
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI: "true"
+          TAURI_CONFIG: '{"bundle":{"resources":{"models/ggml-small.bin":"models/ggml-small.bin"}}}'
           # macOS signing + notarisation
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
