@@ -137,7 +137,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI: "true"
-          TAURI_CONFIG: '{"bundle":{"resources":{"models/ggml-small.bin":"models/ggml-small.bin"}}}'
           # macOS signing + notarisation
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
