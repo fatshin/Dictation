@@ -85,32 +85,11 @@ impl TextInjector {
     }
 
     pub fn set_clipboard(text: &str) -> Result<()> {
-        #[cfg(target_os = "macos")]
-        {
-            use std::process::Command;
-            let mut child = Command::new("pbcopy")
-                .stdin(std::process::Stdio::piped())
-                .spawn()?;
-            if let Some(stdin) = child.stdin.as_mut() {
-                use std::io::Write;
-                stdin.write_all(text.as_bytes())?;
-            }
-            child.wait()?;
-        }
-
-        #[cfg(target_os = "windows")]
-        {
-            use std::process::Command;
-            let mut child = Command::new("clip")
-                .stdin(std::process::Stdio::piped())
-                .spawn()?;
-            if let Some(stdin) = child.stdin.as_mut() {
-                use std::io::Write;
-                stdin.write_all(text.as_bytes())?;
-            }
-            child.wait()?;
-        }
-
+        let mut clipboard = arboard::Clipboard::new()
+            .map_err(|e| anyhow::anyhow!("clipboard init failed: {e}"))?;
+        clipboard
+            .set_text(text)
+            .map_err(|e| anyhow::anyhow!("clipboard set_text failed: {e}"))?;
         Ok(())
     }
 }

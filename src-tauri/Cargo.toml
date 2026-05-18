@@ -50,6 +50,7 @@ rtrb = "0.3"
 
 # Text injection
 enigo = "0.6"
+arboard = "3"
 
 # History DB
 # bundled-sqlcipher-vendored-openssl ships the SQLCipher source AND
