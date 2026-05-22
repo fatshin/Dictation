@@ -50,7 +50,6 @@ function Overlay() {
 
   const stageLabel: Record<string, string> = {
     idle: "",
-    consent_pending: "Waiting for consent...",
     recording: "🎙 Listening...",
     transcribing: "Transcribing...",
     rewriting: "Rewriting...",

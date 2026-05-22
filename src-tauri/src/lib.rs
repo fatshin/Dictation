@@ -8,6 +8,7 @@ pub mod inject;
 pub mod keystore;
 pub mod llm;
 pub mod session;
+pub mod vad;
 
 use asr::AsrState;
 use db::DbState;
@@ -40,7 +41,9 @@ pub fn run() {
             commands::rewrite_text,
             commands::rewrite_streaming,
             commands::get_session_info,
-            commands::grant_consent,
+            commands::list_audio_devices,
+            commands::list_whisper_models,
+            commands::download_whisper_model,
             commands::start_dictation,
             commands::stop_dictation,
             commands::inject_text,
@@ -139,7 +142,7 @@ pub fn run() {
                     Ok(())
                 })();
                 if let Err(e) = result {
-                    log::error!("DB init failed: {e:#}");
+                    eprintln!("[dictation] DB init failed: {e:#}");
                 }
             }
 

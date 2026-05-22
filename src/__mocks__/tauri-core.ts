@@ -47,6 +47,8 @@ function defaults() {
     appSettings: {
       bypass_llm: true,
       whisper_initial_prompt: "",
+      input_device: null,
+      whisper_model: "small",
     },
   };
 }
@@ -104,7 +106,18 @@ export async function invoke<T = unknown>(cmd: string, args: any = {}): Promise<
     case "delete_dictionary_entry":
       s.dictionary = s.dictionary.filter((e: any) => e.id !== args.id);
       return null as any;
-    case "grant_consent":
+    case "list_audio_devices":
+      return [
+        { name: "Built-in Microphone", is_default: true },
+        { name: "USB Condenser Mic", is_default: false },
+      ] as any;
+    case "list_whisper_models":
+      return [
+        { id: "small", display_name: "Small (466 MB)", size_bytes: 466000000, is_bundled: true, available: true },
+        { id: "medium", display_name: "Medium (1.5 GB)", size_bytes: 1530000000, is_bundled: false, available: false },
+        { id: "large-v3-turbo", display_name: "Large v3 Turbo (1.6 GB)", size_bytes: 1620000000, is_bundled: false, available: false },
+      ] as any;
+    case "download_whisper_model":
       return null as any;
     case "start_dictation":
       return "session-1" as any;
@@ -149,6 +162,8 @@ export async function invoke<T = unknown>(cmd: string, args: any = {}): Promise<
         bypass_llm: !!args.settings.bypass_llm,
         whisper_initial_prompt:
           (args.settings.whisper_initial_prompt as string) ?? "",
+        input_device: (args.settings.input_device as string) ?? null,
+        whisper_model: (args.settings.whisper_model as string) ?? "small",
       };
       return s.appSettings as any;
     case "get_autostart":

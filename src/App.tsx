@@ -54,6 +54,21 @@ type DictionaryCandidate = {
 type AppSettings = {
   bypass_llm: boolean;
   whisper_initial_prompt: string;
+  input_device: string | null;
+  whisper_model: string;
+};
+
+type AudioDeviceInfo = {
+  name: string;
+  is_default: boolean;
+};
+
+type WhisperModelStatus = {
+  id: string;
+  display_name: string;
+  size_bytes: number;
+  is_bundled: boolean;
+  available: boolean;
 };
 
 // ADR-005: Whisper-only is the default. bypass_llm=true means the app
@@ -62,6 +77,8 @@ type AppSettings = {
 const DEFAULT_APP_SETTINGS: AppSettings = {
   bypass_llm: true,
   whisper_initial_prompt: "",
+  input_device: null,
+  whisper_model: "small",
 };
 
 // Default candidate ranking for daily-driver use on 16GB-RAM CPU. Order
@@ -140,7 +157,6 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
-  const [consented, setConsented] = useState(false);
   const [tab, setTab] = useState<Tab>("rewrite");
   const [history, setHistory] = useState<RewriteRecord[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -500,11 +516,6 @@ export default function App() {
       subs.forEach((u) => u());
     };
   }, []);
-
-  async function handleConsent() {
-    await invoke("grant_consent");
-    setConsented(true);
-  }
 
   async function startRecording() {
     setError(null);
@@ -868,29 +879,6 @@ export default function App() {
     );
   }
 
-  if (!consented) {
-    return (
-      <main className="app">
-        <header>
-          <h1>Dictation</h1>
-        </header>
-        <section className="consent">
-          <h2>Recording Consent</h2>
-          <p>
-            This application records audio from your microphone for
-            transcription. By proceeding, you confirm you are authorized to
-            record conversations you intend to process.
-          </p>
-          <p>
-            You are responsible for complying with local recording-consent laws
-            (one-party / two-party jurisdictions).
-          </p>
-          <button onClick={handleConsent}>I understand and consent</button>
-        </section>
-      </main>
-    );
-  }
-
   return (
     <main className="app">
       <header>
@@ -1171,6 +1159,12 @@ function GeneralSettingsEditor(props: {
 }) {
   const [bypass, setBypass] = useState(props.settings.bypass_llm);
   const [prompt, setPrompt] = useState(props.settings.whisper_initial_prompt);
+  const [device, setDevice] = useState<string | null>(props.settings.input_device);
+  const [devices, setDevices] = useState<AudioDeviceInfo[]>([]);
+  const [whisperModel, setWhisperModel] = useState(props.settings.whisper_model);
+  const [whisperModels, setWhisperModels] = useState<WhisperModelStatus[]>([]);
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [dlProgress, setDlProgress] = useState<{ downloaded: number; total: number } | null>(null);
   const [autostart, setAutostart] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<null | "ok" | "error" | "truncated">(
@@ -1182,7 +1176,48 @@ function GeneralSettingsEditor(props: {
     invoke<boolean>("get_autostart")
       .then(setAutostart)
       .catch(() => {});
+    refreshDevices();
+    refreshWhisperModels();
+
+    const unsubs: Array<() => void> = [];
+    listen<{ model_id: string; downloaded: number; total: number }>(
+      "whisper:download:progress",
+      (ev) => setDlProgress({ downloaded: ev.payload.downloaded, total: ev.payload.total }),
+    ).then((u) => unsubs.push(u));
+    listen<string>("whisper:download:done", () => {
+      setDownloading(null);
+      setDlProgress(null);
+      refreshWhisperModels();
+    }).then((u) => unsubs.push(u));
+    return () => unsubs.forEach((u) => u());
   }, []);
+
+  function refreshDevices() {
+    invoke<AudioDeviceInfo[]>("list_audio_devices")
+      .then(setDevices)
+      .catch(() => {});
+  }
+
+  function refreshWhisperModels() {
+    invoke<WhisperModelStatus[]>("list_whisper_models")
+      .then(setWhisperModels)
+      .catch(() => {});
+  }
+
+  async function handleDownloadModel(modelId: string) {
+    setDownloading(modelId);
+    setDlProgress(null);
+    try {
+      await invoke("download_whisper_model", { modelId });
+    } catch (e) {
+      setErrMsg(`ダウンロード失敗: ${e}`);
+      setSaveStatus("error");
+    } finally {
+      setDownloading(null);
+      setDlProgress(null);
+      refreshWhisperModels();
+    }
+  }
 
   // Sync local form state when the parent's settings change (e.g. after
   // first DB load). Otherwise the form would stay on its initial defaults
@@ -1191,6 +1226,8 @@ function GeneralSettingsEditor(props: {
   useEffect(() => {
     setBypass(props.settings.bypass_llm);
     setPrompt(props.settings.whisper_initial_prompt);
+    setDevice(props.settings.input_device);
+    setWhisperModel(props.settings.whisper_model);
   }, [props.settings]);
 
   async function save() {
@@ -1201,12 +1238,16 @@ function GeneralSettingsEditor(props: {
       const saved = await props.onSave({
         bypass_llm: bypass,
         whisper_initial_prompt: prompt,
+        input_device: device,
+        whisper_model: whisperModel,
       });
       // Reflect the canonical value the backend stored (it may have
       // truncated NUL bytes or capped length). Without this the UI would
       // silently diverge from what's actually persisted.
       setBypass(saved.bypass_llm);
       setPrompt(saved.whisper_initial_prompt);
+      setDevice(saved.input_device);
+      setWhisperModel(saved.whisper_model);
       const wasTruncated =
         saved.whisper_initial_prompt !== prompt && prompt.length > 0;
       setSaveStatus(wasTruncated ? "truncated" : "ok");
@@ -1221,7 +1262,9 @@ function GeneralSettingsEditor(props: {
 
   const dirty =
     bypass !== props.settings.bypass_llm ||
-    prompt !== props.settings.whisper_initial_prompt;
+    prompt !== props.settings.whisper_initial_prompt ||
+    device !== props.settings.input_device ||
+    whisperModel !== props.settings.whisper_model;
 
   return (
     <div className="general-settings">
@@ -1243,6 +1286,77 @@ function GeneralSettingsEditor(props: {
         語彙ヒントは下の「Whisper初期プロンプト」に列挙してください。
         <br />
         ⚠️ 設定変更は<strong>次回録音から</strong>有効です（録音中の変更は現在の文字起こしには適用されません）。
+      </p>
+
+      <div className="row" style={{ alignItems: "center", gap: "0.5rem" }}>
+        <label style={{ flex: 1 }}>
+          マイク:&nbsp;
+          <select
+            value={device ?? ""}
+            onChange={(e) => setDevice(e.target.value || null)}
+          >
+            <option value="">システムデフォルト</option>
+            {devices.map((d) => (
+              <option key={d.name} value={d.name}>
+                {d.name}{d.is_default ? " (default)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          onClick={refreshDevices}
+          title="デバイスリスト更新"
+          style={{ padding: "0.2rem 0.5rem", fontSize: "1rem" }}
+        >
+          ↻
+        </button>
+      </div>
+      <p className="hint">
+        使用する入力デバイスを選択。「システムデフォルト」はOS設定に従う。
+        設定変更は次回録音から有効。
+      </p>
+
+      <div className="row" style={{ alignItems: "center", gap: "0.5rem" }}>
+        <label style={{ flex: 1 }}>
+          Whisper モデル:&nbsp;
+          <select
+            value={whisperModel}
+            onChange={(e) => setWhisperModel(e.target.value)}
+          >
+            {whisperModels.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.display_name} {m.available ? "" : "(未ダウンロード)"}
+              </option>
+            ))}
+          </select>
+        </label>
+        {whisperModels.find((m) => m.id === whisperModel && !m.available) && (
+          <button
+            type="button"
+            onClick={() => handleDownloadModel(whisperModel)}
+            disabled={!!downloading}
+            style={{ padding: "0.2rem 0.5rem" }}
+          >
+            {downloading === whisperModel ? "DL中..." : "ダウンロード"}
+          </button>
+        )}
+      </div>
+      {downloading && dlProgress && (
+        <div style={{ margin: "0.25rem 0", background: "#e0e0e0", borderRadius: 4, overflow: "hidden", height: 6 }}>
+          <div
+            style={{
+              width: `${Math.round((dlProgress.downloaded / dlProgress.total) * 100)}%`,
+              background: "#4caf50",
+              height: "100%",
+              transition: "width 0.3s",
+            }}
+          />
+        </div>
+      )}
+      <p className="hint">
+        大きいモデルほど精度が上がるが、処理時間とメモリ使用量が増加。
+        変更は次回録音から有効。未ダウンロードのモデルは先にダウンロードが必要。
       </p>
 
       <div className="row">

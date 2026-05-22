@@ -87,6 +87,10 @@ pub struct AppSettings {
     /// Used for vocabulary biasing (proper nouns, technical terms, style).
     /// Whisper truncates to ~224 tokens internally, so keep this short.
     pub whisper_initial_prompt: String,
+    /// Selected input device name. None = use system default.
+    pub input_device: Option<String>,
+    /// Whisper model ID: "small", "medium", "large-v3-turbo".
+    pub whisper_model: String,
 }
 
 impl Default for AppSettings {
@@ -94,6 +98,8 @@ impl Default for AppSettings {
         Self {
             bypass_llm: false,
             whisper_initial_prompt: String::new(),
+            input_device: None,
+            whisper_model: "small".to_string(),
         }
     }
 }
@@ -175,6 +181,8 @@ impl EncryptedDb {
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 bypass_llm INTEGER NOT NULL DEFAULT 0,
                 whisper_initial_prompt TEXT NOT NULL DEFAULT '',
+                input_device TEXT DEFAULT NULL,
+                whisper_model TEXT NOT NULL DEFAULT 'small',
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
@@ -190,6 +198,34 @@ impl EncryptedDb {
             INSERT OR IGNORE INTO schema_version (version) VALUES (2);
             INSERT OR IGNORE INTO schema_version (version) VALUES (3);",
         )?;
+
+        // v4: add input_device column for existing databases
+        let has_input_device: bool = self
+            .conn
+            .prepare("PRAGMA table_info(app_settings)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .any(|col| col == "input_device");
+        if !has_input_device {
+            self.conn.execute_batch(
+                "ALTER TABLE app_settings ADD COLUMN input_device TEXT DEFAULT NULL;
+                 INSERT OR IGNORE INTO schema_version (version) VALUES (4);",
+            )?;
+        }
+
+        let has_whisper_model: bool = self
+            .conn
+            .prepare("PRAGMA table_info(app_settings)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .any(|col| col == "whisper_model");
+        if !has_whisper_model {
+            self.conn.execute_batch(
+                "ALTER TABLE app_settings ADD COLUMN whisper_model TEXT NOT NULL DEFAULT 'small';
+                 INSERT OR IGNORE INTO schema_version (version) VALUES (5);",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -539,20 +575,26 @@ impl EncryptedDb {
 
     pub fn get_app_settings(&self) -> Result<AppSettings> {
         let row = self.conn.query_row(
-            "SELECT bypass_llm, whisper_initial_prompt FROM app_settings WHERE id = 1",
+            "SELECT bypass_llm, whisper_initial_prompt, input_device, whisper_model
+             FROM app_settings WHERE id = 1",
             [],
             |r| {
                 let bypass: i64 = r.get(0)?;
                 let prompt: String = r.get(1)?;
-                Ok((bypass != 0, prompt))
+                let input_device: Option<String> = r.get(2)?;
+                let whisper_model: String = r.get(3)?;
+                Ok((bypass != 0, prompt, input_device, whisper_model))
             },
         );
         match row {
-            Ok((bypass_llm, whisper_initial_prompt)) => Ok(AppSettings {
-                bypass_llm,
-                whisper_initial_prompt,
-            }),
-            // Row missing (shouldn't happen after migration, but be defensive).
+            Ok((bypass_llm, whisper_initial_prompt, input_device, whisper_model)) => {
+                Ok(AppSettings {
+                    bypass_llm,
+                    whisper_initial_prompt,
+                    input_device,
+                    whisper_model,
+                })
+            }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(AppSettings::default()),
             Err(e) => Err(e.into()),
         }
@@ -560,14 +602,6 @@ impl EncryptedDb {
 
     pub fn update_app_settings(&self, s: &AppSettings) -> Result<()> {
         let now = chrono_now();
-        // Sanitise + cap the whisper prompt:
-        //   1. Strip NUL bytes — whisper_rs::set_initial_prompt panics on
-        //      embedded NULs, and they have no semantic role here.
-        //   2. Cap at 700 chars (NOT bytes). Whisper only consumes ~224 tokens
-        //      anyway; the cap is mainly to keep DB rows small and prevent
-        //      pathological UI input. char-based truncation is required
-        //      because Japanese is multibyte and a byte-slice cut would
-        //      panic on a UTF-8 boundary.
         let prompt: String = s
             .whisper_initial_prompt
             .chars()
@@ -575,13 +609,15 @@ impl EncryptedDb {
             .take(700)
             .collect();
         self.conn.execute(
-            "INSERT INTO app_settings (id, bypass_llm, whisper_initial_prompt, updated_at)
-             VALUES (1, ?1, ?2, ?3)
+            "INSERT INTO app_settings (id, bypass_llm, whisper_initial_prompt, input_device, whisper_model, updated_at)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(id) DO UPDATE SET
                 bypass_llm = excluded.bypass_llm,
                 whisper_initial_prompt = excluded.whisper_initial_prompt,
+                input_device = excluded.input_device,
+                whisper_model = excluded.whisper_model,
                 updated_at = excluded.updated_at",
-            rusqlite::params![s.bypass_llm as i64, prompt, now],
+            rusqlite::params![s.bypass_llm as i64, prompt, s.input_device, s.whisper_model, now],
         )?;
         Ok(())
     }

@@ -12,9 +12,16 @@ pub struct AudioCapture {
 unsafe impl Send for AudioCapture {}
 unsafe impl Sync for AudioCapture {}
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AudioDeviceInfo {
+    pub name: String,
+    pub is_default: bool,
+}
+
 pub struct AudioConfig {
     pub sample_rate: u32,
     pub channels: u16,
+    pub device_name: Option<String>,
 }
 
 impl Default for AudioConfig {
@@ -22,8 +29,26 @@ impl Default for AudioConfig {
         Self {
             sample_rate: 16000,
             channels: 1,
+            device_name: None,
         }
     }
+}
+
+pub fn list_input_devices() -> Result<Vec<AudioDeviceInfo>> {
+    let host = cpal::default_host();
+    let default_name = host
+        .default_input_device()
+        .and_then(|d| d.name().ok());
+    let mut devices = Vec::new();
+    for device in host.input_devices()? {
+        if let Ok(name) = device.name() {
+            devices.push(AudioDeviceInfo {
+                is_default: default_name.as_deref() == Some(&name),
+                name,
+            });
+        }
+    }
+    Ok(devices)
 }
 
 impl AudioCapture {
@@ -36,9 +61,22 @@ impl AudioCapture {
 
     pub fn start(&mut self, producer: rtrb::Producer<f32>, config: AudioConfig) -> Result<()> {
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .context("no input device available")?;
+        let device = match &config.device_name {
+            Some(name) => host
+                .input_devices()?
+                .find(|d| d.name().map(|n| n == *name).unwrap_or(false))
+                .or_else(|| {
+                    log::warn!(
+                        "audio: requested device {:?} not found, falling back to default",
+                        name
+                    );
+                    host.default_input_device()
+                })
+                .context("no input device available")?,
+            None => host
+                .default_input_device()
+                .context("no input device available")?,
+        };
 
         let supported = device.default_input_config()?;
         let source_rate = supported.sample_rate().0;

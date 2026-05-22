@@ -47,6 +47,7 @@ cpal = "0.15"
 earshot = "1.1"
 rubato = "2.0"
 rtrb = "0.3"
+sha2 = "0.10"
 
 # Text injection
 enigo = "0.6"

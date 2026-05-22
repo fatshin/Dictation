@@ -68,7 +68,7 @@ impl SessionState {
     pub fn new() -> Self {
         Self {
             current: tokio::sync::Mutex::new(None),
-            consent_given: std::sync::atomic::AtomicBool::new(false),
+            consent_given: std::sync::atomic::AtomicBool::new(true),
         }
     }
 }

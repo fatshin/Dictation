@@ -8,17 +8,12 @@ import { test, expect } from "@playwright/test";
 
 async function gotoMainUI(page: import("@playwright/test").Page) {
   await page.goto("/");
-  // Setup screen passes through (mock returns ready=true) → consent screen.
-  await page.getByRole("button", { name: /consent/i }).click();
-  // Auto-paste only appears on the main UI, and only once → unambiguous.
   await expect(page.getByText(/Auto-paste/)).toBeVisible();
 }
 
 test.describe("regression suite", () => {
-  test("R1: setup → consent → main UI renders", async ({ page }) => {
+  test("R1: setup → main UI renders directly", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText(/Recording Consent/)).toBeVisible();
-    await page.getByRole("button", { name: /consent/i }).click();
     await expect(page.getByText(/Auto-paste/)).toBeVisible();
   });
 
@@ -152,7 +147,7 @@ test.describe("regression suite", () => {
 
     // Reload the page; the alias-stub fakes a fresh app boot.
     await page.reload();
-    await page.getByRole("button", { name: /consent/i }).click();
+    await expect(page.getByText(/Auto-paste/)).toBeVisible();
     await expect(page.locator("[data-task-select]")).toContainText("English");
   });
 

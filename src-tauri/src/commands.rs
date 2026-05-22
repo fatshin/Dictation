@@ -1,4 +1,4 @@
-use crate::asr::{resolve_whisper_model_path, AsrState, WhisperAsr};
+use crate::asr::{resolve_whisper_model_path, AsrState, WhisperAsr, WHISPER_MODELS};
 use crate::audio::AudioConfig;
 use crate::db::{
     AppSettings, DbState, DictionaryEntry, DictionaryUpsert, PromptTemplate, PromptTemplateUpsert,
@@ -12,7 +12,7 @@ use crate::llm::{LlmState, ModelInfo, RewriteParams};
 use crate::session::{DictationSession, SessionInfo, SessionStage, SessionState};
 use serde::Serialize;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc;
 
 // Default candidate set. The wizard considers setup "ready" if at least
@@ -109,10 +109,113 @@ pub async fn get_session_info(
 }
 
 #[tauri::command]
-pub async fn grant_consent(state: State<'_, SessionState>) -> Result<(), String> {
-    state
-        .consent_given
-        .store(true, std::sync::atomic::Ordering::Relaxed);
+pub fn list_audio_devices() -> Result<Vec<crate::audio::AudioDeviceInfo>, String> {
+    crate::audio::list_input_devices().map_err(|e| format!("{e:#}"))
+}
+
+#[derive(Serialize)]
+pub struct WhisperModelStatus {
+    pub id: String,
+    pub display_name: String,
+    pub size_bytes: u64,
+    pub is_bundled: bool,
+    pub available: bool,
+}
+
+#[tauri::command]
+pub fn list_whisper_models(app: AppHandle) -> Vec<WhisperModelStatus> {
+    WHISPER_MODELS
+        .iter()
+        .map(|m| WhisperModelStatus {
+            id: m.id.to_string(),
+            display_name: m.display_name.to_string(),
+            size_bytes: m.size_bytes,
+            is_bundled: m.is_bundled,
+            available: resolve_whisper_model_path(&app, m.id).is_some(),
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn download_whisper_model(
+    app: AppHandle,
+    model_id: String,
+) -> Result<(), String> {
+    use futures_util::StreamExt;
+    use sha2::{Digest, Sha256};
+
+    let model_info = WHISPER_MODELS
+        .iter()
+        .find(|m| m.id == model_id)
+        .ok_or_else(|| format!("Unknown model: {model_id}"))?;
+
+    let local_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| format!("{e}"))?;
+    let models_dir = local_dir.join("models");
+    std::fs::create_dir_all(&models_dir)
+        .map_err(|e| format!("create models dir: {e}"))?;
+    let dest = models_dir.join(model_info.filename);
+
+    let download_url = format!(
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}",
+        model_info.filename
+    );
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&download_url)
+        .send()
+        .await
+        .map_err(|e| format!("download failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("download failed: HTTP {}", resp.status()));
+    }
+
+    let total = resp.content_length().unwrap_or(model_info.size_bytes);
+    let mut stream = resp.bytes_stream();
+    let tmp_dest = dest.with_extension("bin.tmp");
+    let mut file = std::fs::File::create(&tmp_dest)
+        .map_err(|e| format!("create file: {e}"))?;
+    let mut downloaded: u64 = 0;
+    let mut hasher = Sha256::new();
+
+    use std::io::Write;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("stream: {e}"))?;
+        file.write_all(&chunk)
+            .map_err(|e| format!("write: {e}"))?;
+        hasher.update(&chunk);
+        downloaded += chunk.len() as u64;
+        let _ = app.emit(
+            "whisper:download:progress",
+            serde_json::json!({
+                "model_id": model_id,
+                "downloaded": downloaded,
+                "total": total,
+            }),
+        );
+    }
+    file.flush().map_err(|e| format!("flush: {e}"))?;
+    drop(file);
+
+    if !model_info.sha256.is_empty() {
+        let hash = format!("{:x}", hasher.finalize());
+        if hash != model_info.sha256 {
+            let _ = std::fs::remove_file(&tmp_dest);
+            return Err(format!(
+                "SHA-256 mismatch: expected {}, got {hash}",
+                model_info.sha256
+            ));
+        }
+    }
+
+    std::fs::rename(&tmp_dest, &dest)
+        .map_err(|e| format!("rename: {e}"))?;
+
+    let _ = app.emit("whisper:download:done", &model_id);
     Ok(())
 }
 
@@ -121,6 +224,7 @@ pub async fn start_dictation(
     app: AppHandle,
     session_state: State<'_, SessionState>,
     asr_state: State<'_, AsrState>,
+    db_state: State<'_, DbState>,
 ) -> Result<String, String> {
     if !session_state
         .consent_given
@@ -134,16 +238,35 @@ pub async fn start_dictation(
         return Err("Session already active".to_string());
     }
 
-    // Load whisper model if not loaded
+    let (device_name, whisper_model_id) = {
+        let guard = db_state.db.lock().await;
+        let settings = guard
+            .as_ref()
+            .and_then(|db| db.get_app_settings().ok())
+            .unwrap_or_default();
+        (settings.input_device, settings.whisper_model)
+    };
+
     let needs_load = {
         let guard = asr_state.whisper.lock().map_err(|e| format!("{e}"))?;
-        guard.is_none()
+        match guard.as_ref() {
+            None => true,
+            Some(asr) => asr.model_id != whisper_model_id,
+        }
     };
     if needs_load {
-        let model_path = resolve_whisper_model_path(&app)
-            .ok_or_else(|| "Whisper model not found. Set DICTATION_WHISPER_MODEL or install to ~/Library/Application Support/Dictation/models/ggml-small.bin".to_string())?;
+        {
+            let mut guard = asr_state.whisper.lock().map_err(|e| format!("{e}"))?;
+            *guard = None;
+        }
+        let model_path = resolve_whisper_model_path(&app, &whisper_model_id)
+            .ok_or_else(|| format!(
+                "Whisper model '{}' not found. Download it from Settings.",
+                whisper_model_id
+            ))?;
         let path_str = model_path.to_string_lossy().to_string();
-        let asr = tokio::task::spawn_blocking(move || WhisperAsr::new(&path_str))
+        let mid = whisper_model_id.clone();
+        let asr = tokio::task::spawn_blocking(move || WhisperAsr::new(&path_str, &mid))
             .await
             .map_err(|e| format!("join error: {e}"))?
             .map_err(|e| format!("whisper load failed: {e:#}"))?;
@@ -156,7 +279,7 @@ pub async fn start_dictation(
     {
         let mut audio_guard = asr_state.audio.lock().map_err(|e| format!("{e}"))?;
         audio_guard
-            .start(producer, AudioConfig::default())
+            .start(producer, AudioConfig { device_name, ..AudioConfig::default() })
             .map_err(|e| format!("audio start failed: {e:#}"))?;
     }
     {
@@ -235,6 +358,21 @@ pub async fn stop_dictation(
         samples.len(),
         samples.len() as f64 / 16000.0
     );
+
+    let samples = {
+        let mut vad = crate::vad::VadFilter::new();
+        let filtered = vad.filter_speech(&samples);
+        if filtered.is_empty() {
+            return Err("No speech detected in audio".to_string());
+        }
+        log::info!(
+            "vad: {}/{} samples retained ({:.0}%)",
+            filtered.len(),
+            samples.len(),
+            filtered.len() as f64 / samples.len() as f64 * 100.0
+        );
+        filtered
+    };
 
     let _ = app.emit(
         "session:state",
@@ -527,7 +665,7 @@ pub async fn check_setup(
     }
 
     // Check whisper model
-    status.whisper_available = resolve_whisper_model_path(&app).is_some();
+    status.whisper_available = resolve_whisper_model_path(&app, "small").is_some();
 
     // Setup is "ready" if AT LEAST ONE candidate is installed — the user
     // doesn't need every fallback. In Whisper-only (bypass_llm) mode the
