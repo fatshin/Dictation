@@ -36,9 +36,7 @@ impl Default for AudioConfig {
 
 pub fn list_input_devices() -> Result<Vec<AudioDeviceInfo>> {
     let host = cpal::default_host();
-    let default_name = host
-        .default_input_device()
-        .and_then(|d| d.name().ok());
+    let default_name = host.default_input_device().and_then(|d| d.name().ok());
     let mut devices = Vec::new();
     for device in host.input_devices()? {
         if let Ok(name) = device.name() {

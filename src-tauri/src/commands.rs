@@ -137,10 +137,7 @@ pub fn list_whisper_models(app: AppHandle) -> Vec<WhisperModelStatus> {
 }
 
 #[tauri::command]
-pub async fn download_whisper_model(
-    app: AppHandle,
-    model_id: String,
-) -> Result<(), String> {
+pub async fn download_whisper_model(app: AppHandle, model_id: String) -> Result<(), String> {
     use futures_util::StreamExt;
     use sha2::{Digest, Sha256};
 
@@ -154,8 +151,7 @@ pub async fn download_whisper_model(
         .app_local_data_dir()
         .map_err(|e| format!("{e}"))?;
     let models_dir = local_dir.join("models");
-    std::fs::create_dir_all(&models_dir)
-        .map_err(|e| format!("create models dir: {e}"))?;
+    std::fs::create_dir_all(&models_dir).map_err(|e| format!("create models dir: {e}"))?;
     let dest = models_dir.join(model_info.filename);
 
     let download_url = format!(
@@ -177,16 +173,14 @@ pub async fn download_whisper_model(
     let total = resp.content_length().unwrap_or(model_info.size_bytes);
     let mut stream = resp.bytes_stream();
     let tmp_dest = dest.with_extension("bin.tmp");
-    let mut file = std::fs::File::create(&tmp_dest)
-        .map_err(|e| format!("create file: {e}"))?;
+    let mut file = std::fs::File::create(&tmp_dest).map_err(|e| format!("create file: {e}"))?;
     let mut downloaded: u64 = 0;
     let mut hasher = Sha256::new();
 
     use std::io::Write;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| format!("stream: {e}"))?;
-        file.write_all(&chunk)
-            .map_err(|e| format!("write: {e}"))?;
+        file.write_all(&chunk).map_err(|e| format!("write: {e}"))?;
         hasher.update(&chunk);
         downloaded += chunk.len() as u64;
         let _ = app.emit(
@@ -212,8 +206,7 @@ pub async fn download_whisper_model(
         }
     }
 
-    std::fs::rename(&tmp_dest, &dest)
-        .map_err(|e| format!("rename: {e}"))?;
+    std::fs::rename(&tmp_dest, &dest).map_err(|e| format!("rename: {e}"))?;
 
     let _ = app.emit("whisper:download:done", &model_id);
     Ok(())
@@ -259,11 +252,12 @@ pub async fn start_dictation(
             let mut guard = asr_state.whisper.lock().map_err(|e| format!("{e}"))?;
             *guard = None;
         }
-        let model_path = resolve_whisper_model_path(&app, &whisper_model_id)
-            .ok_or_else(|| format!(
+        let model_path = resolve_whisper_model_path(&app, &whisper_model_id).ok_or_else(|| {
+            format!(
                 "Whisper model '{}' not found. Download it from Settings.",
                 whisper_model_id
-            ))?;
+            )
+        })?;
         let path_str = model_path.to_string_lossy().to_string();
         let mid = whisper_model_id.clone();
         let asr = tokio::task::spawn_blocking(move || WhisperAsr::new(&path_str, &mid))
@@ -279,7 +273,13 @@ pub async fn start_dictation(
     {
         let mut audio_guard = asr_state.audio.lock().map_err(|e| format!("{e}"))?;
         audio_guard
-            .start(producer, AudioConfig { device_name, ..AudioConfig::default() })
+            .start(
+                producer,
+                AudioConfig {
+                    device_name,
+                    ..AudioConfig::default()
+                },
+            )
             .map_err(|e| format!("audio start failed: {e:#}"))?;
     }
     {
@@ -809,9 +809,7 @@ pub async fn reset_prompt(state: State<'_, DbState>, id: String) -> Result<Promp
 #[tauri::command]
 pub async fn get_autostart(app: AppHandle) -> Result<bool, String> {
     use tauri_plugin_autostart::ManagerExt;
-    app.autolaunch()
-        .is_enabled()
-        .map_err(|e| format!("{e:#}"))
+    app.autolaunch().is_enabled().map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]

@@ -85,8 +85,8 @@ impl TextInjector {
     }
 
     pub fn set_clipboard(text: &str) -> Result<()> {
-        let mut clipboard = arboard::Clipboard::new()
-            .map_err(|e| anyhow::anyhow!("clipboard init failed: {e}"))?;
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| anyhow::anyhow!("clipboard init failed: {e}"))?;
         clipboard
             .set_text(text)
             .map_err(|e| anyhow::anyhow!("clipboard set_text failed: {e}"))?;
