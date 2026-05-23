@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "dictation"
-version = "0.0.3"
+version = "0.0.6"
 dependencies = [
  "accessibility-sys",
  "anyhow",

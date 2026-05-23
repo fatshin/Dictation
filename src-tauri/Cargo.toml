@@ -1,6 +1,6 @@
 [package]
 name = "dictation"
-version = "0.0.3"
+version = "0.0.6"
 description = "Offline dictation + LLM rewrite (macOS / Windows). Phase 1a scaffold per ADR-001 + ADR-002."
 authors = ["Motohashi Shinichi <fatshin@gmail.com>"]
 edition = "2021"
