@@ -49,6 +49,7 @@ function defaults() {
       whisper_initial_prompt: "",
       input_device: null,
       whisper_model: "small",
+      dictation_hotkey: "primary_d",
     },
   };
 }
@@ -164,6 +165,8 @@ export async function invoke<T = unknown>(cmd: string, args: any = {}): Promise<
           (args.settings.whisper_initial_prompt as string) ?? "",
         input_device: (args.settings.input_device as string) ?? null,
         whisper_model: (args.settings.whisper_model as string) ?? "small",
+        dictation_hotkey:
+          (args.settings.dictation_hotkey as string) ?? "primary_d",
       };
       return s.appSettings as any;
     case "get_autostart":

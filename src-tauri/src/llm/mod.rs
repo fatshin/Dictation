@@ -42,7 +42,7 @@ pub struct OllamaRuntime {
 
 impl OllamaRuntime {
     pub fn new(base: impl Into<String>) -> Self {
-        let http = reqwest::Client::builder().build().expect("reqwest client");
+        let http = reqwest::Client::new();
         Self {
             base: base.into(),
             http,
@@ -224,5 +224,11 @@ impl LlmState {
         Self {
             runtime: std::sync::Arc::new(OllamaRuntime::default()),
         }
+    }
+}
+
+impl Default for LlmState {
+    fn default() -> Self {
+        Self::new()
     }
 }

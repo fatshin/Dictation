@@ -56,6 +56,7 @@ type AppSettings = {
   whisper_initial_prompt: string;
   input_device: string | null;
   whisper_model: string;
+  dictation_hotkey: string;
 };
 
 type AudioDeviceInfo = {
@@ -79,7 +80,35 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   whisper_initial_prompt: "",
   input_device: null,
   whisper_model: "small",
+  dictation_hotkey: "primary_d",
 };
+
+const HOTKEY_OPTIONS = [
+  {
+    id: "primary_d",
+    label: "標準",
+    mac: "⌘⇧D",
+    win: "Ctrl+Shift+D",
+  },
+  {
+    id: "primary_r",
+    label: "録音向け",
+    mac: "⌘⇧R",
+    win: "Ctrl+Shift+R",
+  },
+  {
+    id: "primary_space",
+    label: "Space",
+    mac: "⌘⇧Space",
+    win: "Ctrl+Shift+Space",
+  },
+  {
+    id: "ctrl_alt_space",
+    label: "共通",
+    mac: "Ctrl+Option+Space",
+    win: "Ctrl+Alt+Space",
+  },
+];
 
 // Default candidate ranking for daily-driver use on 16GB-RAM CPU. Order
 // matches research/phase0/ollama_candidates.json `ranked_priority`:
@@ -183,7 +212,7 @@ export default function App() {
             appSettingsRef.current = settings;
           }
         } catch {
-          // DB not yet initialised (first run) — defaults are fine.
+          // Storage not yet initialised (first run) — defaults are fine.
         }
         const s = await invoke<SetupStatus>("check_setup");
         if (cancelled) return;
@@ -293,7 +322,7 @@ export default function App() {
       const s = await invoke<AppSettings>("get_app_settings");
       setAppSettings(s);
     } catch {
-      // DB not initialised yet; keep defaults.
+      // Storage not initialised yet; keep defaults.
     }
   }
 
@@ -365,7 +394,7 @@ export default function App() {
         });
         if (block && block.length > 0) dictionaryBlock = block;
       } catch {
-        // DB not initialised or empty dictionary — proceed without.
+        // Storage not initialised or empty dictionary — proceed without.
       }
 
       const prompt = await invoke<string>("build_rewrite_prompt", {
@@ -1162,6 +1191,9 @@ function GeneralSettingsEditor(props: {
   const [device, setDevice] = useState<string | null>(props.settings.input_device);
   const [devices, setDevices] = useState<AudioDeviceInfo[]>([]);
   const [whisperModel, setWhisperModel] = useState(props.settings.whisper_model);
+  const [dictationHotkey, setDictationHotkey] = useState(
+    props.settings.dictation_hotkey,
+  );
   const [whisperModels, setWhisperModels] = useState<WhisperModelStatus[]>([]);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [dlProgress, setDlProgress] = useState<{ downloaded: number; total: number } | null>(null);
@@ -1228,6 +1260,7 @@ function GeneralSettingsEditor(props: {
     setPrompt(props.settings.whisper_initial_prompt);
     setDevice(props.settings.input_device);
     setWhisperModel(props.settings.whisper_model);
+    setDictationHotkey(props.settings.dictation_hotkey);
   }, [props.settings]);
 
   async function save() {
@@ -1240,6 +1273,7 @@ function GeneralSettingsEditor(props: {
         whisper_initial_prompt: prompt,
         input_device: device,
         whisper_model: whisperModel,
+        dictation_hotkey: dictationHotkey,
       });
       // Reflect the canonical value the backend stored (it may have
       // truncated NUL bytes or capped length). Without this the UI would
@@ -1248,6 +1282,7 @@ function GeneralSettingsEditor(props: {
       setPrompt(saved.whisper_initial_prompt);
       setDevice(saved.input_device);
       setWhisperModel(saved.whisper_model);
+      setDictationHotkey(saved.dictation_hotkey);
       const wasTruncated =
         saved.whisper_initial_prompt !== prompt && prompt.length > 0;
       setSaveStatus(wasTruncated ? "truncated" : "ok");
@@ -1264,7 +1299,8 @@ function GeneralSettingsEditor(props: {
     bypass !== props.settings.bypass_llm ||
     prompt !== props.settings.whisper_initial_prompt ||
     device !== props.settings.input_device ||
-    whisperModel !== props.settings.whisper_model;
+    whisperModel !== props.settings.whisper_model ||
+    dictationHotkey !== props.settings.dictation_hotkey;
 
   return (
     <div className="general-settings">
@@ -1357,6 +1393,25 @@ function GeneralSettingsEditor(props: {
       <p className="hint">
         大きいモデルほど精度が上がるが、処理時間とメモリ使用量が増加。
         変更は次回録音から有効。未ダウンロードのモデルは先にダウンロードが必要。
+      </p>
+
+      <div className="row" style={{ alignItems: "center", gap: "0.5rem" }}>
+        <label style={{ flex: 1 }}>
+          録音開始キー:&nbsp;
+          <select
+            value={dictationHotkey}
+            onChange={(e) => setDictationHotkey(e.target.value)}
+          >
+            {HOTKEY_OPTIONS.map((h) => (
+              <option key={h.id} value={h.id}>
+                {h.label}（Mac: {h.mac} / Windows: {h.win}）
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <p className="hint">
+        保存するとすぐに反映されます。macOS の fn 長押し録音は引き続き利用できます。
       </p>
 
       <div className="row">

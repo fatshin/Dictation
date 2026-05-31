@@ -20,13 +20,3 @@ mod macos;
 
 #[cfg(target_os = "macos")]
 pub use macos::MacKeystore;
-
-#[cfg(not(target_os = "macos"))]
-pub struct StubKeystore;
-
-#[cfg(not(target_os = "macos"))]
-impl Keystore for StubKeystore {
-    fn get_or_create_db_key(&self, _service: &str) -> Result<SecretKey> {
-        anyhow::bail!("Keystore not implemented for this platform")
-    }
-}

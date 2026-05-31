@@ -39,14 +39,16 @@ impl FnState {
 }
 
 pub fn start_fn_key_listener(app: AppHandle) {
-    std::thread::Builder::new()
+    let spawn_result = std::thread::Builder::new()
         .name("fn-key-tap".into())
         .spawn(move || {
             if let Err(e) = run_event_tap(app) {
                 log::error!("fn-key listener exited: {e}");
             }
-        })
-        .expect("spawn fn-key listener thread");
+        });
+    if let Err(e) = spawn_result {
+        log::error!("failed to spawn fn-key listener thread: {e}");
+    }
 }
 
 fn run_event_tap(app: AppHandle) -> Result<(), String> {

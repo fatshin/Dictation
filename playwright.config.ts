@@ -23,7 +23,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: "list",
   use: {
-    baseURL: "http://localhost:1422",
+    baseURL: "http://127.0.0.1:1422",
     trace: "on-first-retry",
   },
   projects: [
@@ -34,8 +34,8 @@ export default defineConfig({
   // off because the dev port may not have VITE_E2E=1 (which gates the
   // Tauri-API alias substitution).
   webServer: {
-    command: "VITE_E2E=1 pnpm dev",
-    url: "http://localhost:1422",
+    command: "TAURI_DEV_HOST=127.0.0.1 VITE_E2E=1 pnpm dev",
+    url: "http://127.0.0.1:1422",
     reuseExistingServer: false,
     timeout: 60_000,
   },

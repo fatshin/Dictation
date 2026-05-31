@@ -53,24 +53,15 @@ sha2 = "0.10"
 enigo = "0.6"
 arboard = "3"
 
-# History DB
-# bundled-sqlcipher-vendored-openssl ships the SQLCipher source AND
-# a vendored OpenSSL build inside the crate. This avoids the
-# system-OpenSSL discovery dance on Windows (LNK1181 on libcrypto.lib
-# with the Chocolatey layout, vcpkg name-mangling on libcrypto-3-x64.lib,
-# etc.) and also removes the need for libssl-dev on Linux. The cost is
-# a slightly slower first build because openssl-sys compiles from
-# source — once, in a cached cargo target.
-rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl"] }
-
 # macOS keystore + CGEventTap (fn key) + Accessibility API (focused field context)
-# + whisper-rs with the Metal backend.
+# + whisper-rs with the Metal backend + SQLCipher history DB.
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"
 core-foundation = "0.10"
 core-graphics = "0.24"
 accessibility-sys = "0.1"
 whisper-rs = { version = "0.16", default-features = false, features = ["metal"] }
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl"] }
 
 [profile.release]
 opt-level = 3

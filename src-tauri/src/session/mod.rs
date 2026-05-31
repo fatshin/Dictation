@@ -59,6 +59,12 @@ impl DictationSession {
     }
 }
 
+impl Default for DictationSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct SessionState {
     pub current: tokio::sync::Mutex<Option<DictationSession>>,
     pub consent_given: std::sync::atomic::AtomicBool,
@@ -70,5 +76,11 @@ impl SessionState {
             current: tokio::sync::Mutex::new(None),
             consent_given: std::sync::atomic::AtomicBool::new(true),
         }
+    }
+}
+
+impl Default for SessionState {
+    fn default() -> Self {
+        Self::new()
     }
 }

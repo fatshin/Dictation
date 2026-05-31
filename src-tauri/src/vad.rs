@@ -34,8 +34,8 @@ impl VadFilter {
 
         // Pad speech regions: mark PAD_FRAMES before/after each speech frame
         let mut padded = vec![false; n_frames];
-        for i in 0..n_frames {
-            if is_speech[i] {
+        for (i, speech) in is_speech.iter().enumerate().take(n_frames) {
+            if *speech {
                 let start = i.saturating_sub(PAD_FRAMES);
                 let end = (i + PAD_FRAMES + 1).min(n_frames);
                 for p in &mut padded[start..end] {
@@ -58,6 +58,12 @@ impl VadFilter {
         }
 
         out
+    }
+}
+
+impl Default for VadFilter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

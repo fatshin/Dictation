@@ -17,13 +17,12 @@ use session::SessionState;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Emitter, Manager, RunEvent, WindowEvent,
+    Manager, RunEvent, WindowEvent,
 };
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let app = match tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -76,9 +75,13 @@ pub fn run() {
             let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
             let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
 
-            TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
+            let mut tray = TrayIconBuilder::new();
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            } else {
+                log::warn!("default window icon not found; tray icon will use platform default");
+            }
+            tray.menu(&menu)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
@@ -92,18 +95,6 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
-
-            // Global shortcut: Cmd+Shift+D (Mac) / Ctrl+Shift+D (Win)
-            #[cfg(target_os = "macos")]
-            let shortcut = Shortcut::new(Some(Modifiers::META | Modifiers::SHIFT), Code::KeyD);
-            #[cfg(not(target_os = "macos"))]
-            let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyD);
-
-            let handle = app.handle().clone();
-            app.global_shortcut()
-                .on_shortcut(shortcut, move |_app, _shortcut, _event| {
-                    let _ = handle.emit("hotkey:dictation", ());
-                })?;
 
             // Trigger the Accessibility permission prompt on first run.
             // Without this, AXValue calls return None silently and the user
@@ -123,9 +114,9 @@ pub fn run() {
             // this to fire the synthesised Cmd+V at exactly the right moment.
             inject::start_focus_tracker(app.handle().clone());
 
-            // Open the encrypted DB and seed built-in prompts. Failure here is
-            // logged but does not abort startup — the rest of the app
-            // (rewrite-only flows) can still function.
+            // macOS keeps the SQLCipher store. Other platforms intentionally
+            // run DB-less and persist settings/prompts/dictionary via JSON
+            // fallback in command handlers.
             #[cfg(target_os = "macos")]
             {
                 use crate::keystore::{Keystore, MacKeystore};
@@ -142,14 +133,42 @@ pub fn run() {
                     Ok(())
                 })();
                 if let Err(e) = result {
-                    eprintln!("[dictation] DB init failed: {e:#}");
+                    log::info!("DB unavailable; using JSON fallback store: {e:#}");
                 }
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            log::info!("Using JSON fallback store without SQLCipher DB on this platform");
+
+            let settings = {
+                let state: tauri::State<DbState> = app.state();
+                let guard = state.db.blocking_lock();
+                guard
+                    .as_ref()
+                    .and_then(|db| db.get_app_settings().ok())
+                    .or_else(|| commands::load_fallback_app_settings(app.handle()).ok())
+                    .unwrap_or_default()
+            };
+            if let Err(e) =
+                hotkey::register_dictation_hotkey(app.handle(), &settings.dictation_hotkey)
+            {
+                log::warn!("configured dictation hotkey failed; trying default hotkey: {e}");
+                hotkey::register_dictation_hotkey(
+                    app.handle(),
+                    hotkey::DEFAULT_DICTATION_HOTKEY_ID,
+                )?;
             }
 
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building tauri application");
+    {
+        Ok(app) => app,
+        Err(e) => {
+            eprintln!("[dictation] failed to build tauri application: {e}");
+            return;
+        }
+    };
 
     app.run(|app_handle, event| {
         if let RunEvent::WindowEvent {

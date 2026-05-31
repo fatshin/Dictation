@@ -36,6 +36,7 @@ pub struct FocusedFieldContext {
     pub truncated: bool,
 }
 
+#[cfg(target_os = "macos")]
 const MAX_CONTEXT_CHARS: usize = 4096;
 
 #[cfg(target_os = "macos")]
@@ -50,7 +51,6 @@ mod mac {
     use core_foundation::boolean::CFBoolean;
     use core_foundation::dictionary::CFDictionary;
     use core_foundation::string::{CFString, CFStringGetTypeID, CFStringRef};
-    use std::ffi::c_void;
 
     /// Returns true if the app already holds Accessibility permission.
     /// Does NOT prompt the user.
@@ -144,7 +144,7 @@ mod mac {
         let err = AXUIElementCopyAttributeValue(
             element,
             cf_attr.as_concrete_TypeRef(),
-            &mut value as *mut CFTypeRef as *mut *const c_void,
+            &mut value as *mut CFTypeRef,
         );
         if err != kAXErrorSuccess || value.is_null() {
             return None;

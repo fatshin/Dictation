@@ -10,7 +10,8 @@ use crate::inject::{
 };
 use crate::llm::{LlmState, ModelInfo, RewriteParams};
 use crate::session::{DictationSession, SessionInfo, SessionStage, SessionState};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc;
@@ -33,6 +34,111 @@ const REQUIRED_MODELS: &[&str] = &[
     "gemma4:e2b",
 ];
 const RING_BUFFER_SIZE: usize = 16000 * 60; // 60 seconds at 16kHz
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct JsonFallbackStore {
+    #[serde(default)]
+    settings: AppSettings,
+    #[serde(default)]
+    dictionary: Vec<DictionaryEntry>,
+    #[serde(default)]
+    prompts: Vec<PromptTemplate>,
+}
+
+fn json_store_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let local_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| format!("{e}"))?;
+    std::fs::create_dir_all(&local_dir).map_err(|e| format!("create app data dir: {e}"))?;
+    Ok(local_dir.join("dictation.json"))
+}
+
+fn load_json_store(app: &AppHandle) -> Result<JsonFallbackStore, String> {
+    let path = json_store_path(app)?;
+    match std::fs::read_to_string(&path) {
+        Ok(raw) => match serde_json::from_str(&raw) {
+            Ok(store) => Ok(store),
+            Err(e) => {
+                log::warn!("json fallback store is unreadable; using defaults: {e}");
+                Ok(JsonFallbackStore::default())
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(JsonFallbackStore::default()),
+        Err(e) => Err(format!("read json fallback store: {e}")),
+    }
+}
+
+pub(crate) fn load_fallback_app_settings(app: &AppHandle) -> Result<AppSettings, String> {
+    Ok(load_json_store(app)?.settings)
+}
+
+fn save_json_store(app: &AppHandle, store: &JsonFallbackStore) -> Result<(), String> {
+    let path = json_store_path(app)?;
+    let tmp = path.with_extension("json.tmp");
+    let body =
+        serde_json::to_string_pretty(store).map_err(|e| format!("encode json store: {e}"))?;
+    std::fs::write(&tmp, body).map_err(|e| format!("write json fallback store: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("replace json fallback store: {e}"))
+}
+
+fn fallback_timestamp() -> String {
+    "1970-01-01 00:00:00".to_string()
+}
+
+fn now_timestamp() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    now.to_string()
+}
+
+fn builtin_prompt_templates() -> Vec<PromptTemplate> {
+    let ts = fallback_timestamp();
+    BUILTIN_PROMPTS
+        .iter()
+        .enumerate()
+        .map(|(idx, (name, label, body, language))| PromptTemplate {
+            id: format!("builtin_{name}"),
+            name: (*name).to_string(),
+            label: (*label).to_string(),
+            body: (*body).to_string(),
+            language: (*language).to_string(),
+            is_builtin: true,
+            order_idx: idx as i32,
+            created_at: ts.clone(),
+            updated_at: ts.clone(),
+        })
+        .collect()
+}
+
+fn list_json_prompts(store: &JsonFallbackStore) -> Vec<PromptTemplate> {
+    let mut by_id: HashMap<String, PromptTemplate> = builtin_prompt_templates()
+        .into_iter()
+        .map(|p| (p.id.clone(), p))
+        .collect();
+    for prompt in &store.prompts {
+        if let Some(base) = by_id.get(&prompt.id).cloned() {
+            let mut merged = prompt.clone();
+            if base.is_builtin {
+                merged.is_builtin = true;
+                merged.order_idx = base.order_idx;
+                merged.created_at = base.created_at;
+            }
+            by_id.insert(prompt.id.clone(), merged);
+        } else {
+            by_id.insert(prompt.id.clone(), prompt.clone());
+        }
+    }
+    let mut prompts: Vec<PromptTemplate> = by_id.into_values().collect();
+    prompts.sort_by(|a, b| {
+        a.order_idx
+            .cmp(&b.order_idx)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    prompts
+}
 
 #[tauri::command]
 pub async fn ping() -> &'static str {
@@ -236,7 +342,11 @@ pub async fn start_dictation(
         let settings = guard
             .as_ref()
             .and_then(|db| db.get_app_settings().ok())
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                load_json_store(&app)
+                    .map(|store| store.settings)
+                    .unwrap_or_default()
+            });
         (settings.input_device, settings.whisper_model)
     };
 
@@ -309,6 +419,13 @@ pub async fn stop_dictation(
     asr_state: State<'_, AsrState>,
     db_state: State<'_, DbState>,
 ) -> Result<String, String> {
+    {
+        let mut session_guard = session_state.current.lock().await;
+        if session_guard.take().is_none() {
+            return Ok(String::new());
+        }
+    }
+
     // We'll clear the session at the end regardless of outcome
     struct ClearSession<'a>(&'a SessionState);
     impl Drop for ClearSession<'_> {
@@ -349,7 +466,7 @@ pub async fn stop_dictation(
                 chunk.commit_all();
                 buf
             }
-            None => return Err("No audio consumer available".to_string()),
+            None => return Ok(String::new()),
         }
     };
 
@@ -390,6 +507,11 @@ pub async fn stop_dictation(
             .as_ref()
             .and_then(|db| db.get_app_settings().ok())
             .map(|s| s.whisper_initial_prompt)
+            .or_else(|| {
+                load_json_store(&app)
+                    .ok()
+                    .map(|store| store.settings.whisper_initial_prompt)
+            })
             .unwrap_or_default()
     };
 
@@ -562,7 +684,7 @@ pub async fn search_history(
         Some(db) => db
             .search_rewrites(&query, limit.unwrap_or(50))
             .map_err(|e| format!("{e:#}")),
-        None => Err("Database not initialized".to_string()),
+        None => Ok(Vec::new()),
     }
 }
 
@@ -576,7 +698,7 @@ pub async fn list_history(
         Some(db) => db
             .list_rewrites(limit.unwrap_or(50))
             .map_err(|e| format!("{e:#}")),
-        None => Err("Database not initialized".to_string()),
+        None => Ok(Vec::new()),
     }
 }
 
@@ -620,8 +742,12 @@ pub async fn check_setup(
                 true
             }),
             None => {
-                log::info!("check_setup: DB not initialised, defaulting to bypass_llm=true");
-                true
+                load_json_store(&app)
+                    .map(|store| store.settings.bypass_llm)
+                    .unwrap_or_else(|e| {
+                        log::warn!("check_setup: JSON settings unavailable ({e}), defaulting to bypass_llm=true");
+                        true
+                    })
             }
         }
     };
@@ -732,48 +858,102 @@ pub async fn pull_model(app: AppHandle, model: String) -> Result<(), String> {
 // ----- Dictionary commands -----
 
 #[tauri::command]
-pub async fn list_dictionary(state: State<'_, DbState>) -> Result<Vec<DictionaryEntry>, String> {
+pub async fn list_dictionary(
+    app: AppHandle,
+    state: State<'_, DbState>,
+) -> Result<Vec<DictionaryEntry>, String> {
     let guard = state.db.lock().await;
     match guard.as_ref() {
         Some(db) => db.list_dictionary().map_err(|e| format!("{e:#}")),
-        None => Err("DB not initialized".into()),
+        None => Ok(load_json_store(&app)?.dictionary),
     }
 }
 
 #[tauri::command]
 pub async fn upsert_dictionary_entry(
+    app: AppHandle,
     state: State<'_, DbState>,
     payload: DictionaryUpsert,
 ) -> Result<DictionaryEntry, String> {
     let guard = state.db.lock().await;
     match guard.as_ref() {
         Some(db) => db.upsert_dictionary(&payload).map_err(|e| format!("{e:#}")),
-        None => Err("DB not initialized".into()),
+        None => {
+            if payload.term.trim().is_empty() {
+                return Err("term must not be empty".into());
+            }
+            let mut store = load_json_store(&app)?;
+            let now = now_timestamp();
+            let id = payload
+                .id
+                .clone()
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let existing_created_at = store
+                .dictionary
+                .iter()
+                .find(|entry| entry.id == id)
+                .map(|entry| entry.created_at.clone())
+                .unwrap_or_else(|| now.clone());
+            let entry = DictionaryEntry {
+                id: id.clone(),
+                term: payload.term,
+                reading: payload.reading,
+                aliases: payload.aliases,
+                category: payload.category,
+                notes: payload.notes,
+                created_at: existing_created_at,
+                updated_at: now,
+            };
+            if let Some(pos) = store
+                .dictionary
+                .iter()
+                .position(|existing| existing.id == id)
+            {
+                store.dictionary[pos] = entry.clone();
+            } else {
+                store.dictionary.push(entry.clone());
+            }
+            store.dictionary.sort_by(|a, b| a.term.cmp(&b.term));
+            save_json_store(&app, &store)?;
+            Ok(entry)
+        }
     }
 }
 
 #[tauri::command]
-pub async fn delete_dictionary_entry(state: State<'_, DbState>, id: String) -> Result<(), String> {
+pub async fn delete_dictionary_entry(
+    app: AppHandle,
+    state: State<'_, DbState>,
+    id: String,
+) -> Result<(), String> {
     let guard = state.db.lock().await;
     match guard.as_ref() {
         Some(db) => db.delete_dictionary(&id).map_err(|e| format!("{e:#}")),
-        None => Err("DB not initialized".into()),
+        None => {
+            let mut store = load_json_store(&app)?;
+            store.dictionary.retain(|entry| entry.id != id);
+            save_json_store(&app, &store)
+        }
     }
 }
 
 // ----- Prompt-template commands -----
 
 #[tauri::command]
-pub async fn list_prompts(state: State<'_, DbState>) -> Result<Vec<PromptTemplate>, String> {
+pub async fn list_prompts(
+    app: AppHandle,
+    state: State<'_, DbState>,
+) -> Result<Vec<PromptTemplate>, String> {
     let guard = state.db.lock().await;
     match guard.as_ref() {
         Some(db) => db.list_prompt_templates().map_err(|e| format!("{e:#}")),
-        None => Err("DB not initialized".into()),
+        None => Ok(list_json_prompts(&load_json_store(&app)?)),
     }
 }
 
 #[tauri::command]
 pub async fn upsert_prompt(
+    app: AppHandle,
     state: State<'_, DbState>,
     payload: PromptTemplateUpsert,
 ) -> Result<PromptTemplate, String> {
@@ -782,27 +962,97 @@ pub async fn upsert_prompt(
         Some(db) => db
             .upsert_prompt_template(&payload)
             .map_err(|e| format!("{e:#}")),
-        None => Err("DB not initialized".into()),
+        None => {
+            if !payload.body.contains("{input}") {
+                return Err("prompt template must contain {input} placeholder".into());
+            }
+            if payload.name.trim().is_empty() {
+                return Err("name must not be empty".into());
+            }
+            let mut store = load_json_store(&app)?;
+            let id = payload
+                .id
+                .clone()
+                .unwrap_or_else(|| format!("user_{}", uuid::Uuid::new_v4()));
+            let now = now_timestamp();
+            let builtin = builtin_prompt_templates()
+                .into_iter()
+                .find(|prompt| prompt.id == id);
+            let created_at = store
+                .prompts
+                .iter()
+                .find(|prompt| prompt.id == id)
+                .map(|prompt| prompt.created_at.clone())
+                .or_else(|| builtin.as_ref().map(|prompt| prompt.created_at.clone()))
+                .unwrap_or_else(|| now.clone());
+            let prompt = PromptTemplate {
+                id: id.clone(),
+                name: payload.name,
+                label: payload.label,
+                body: payload.body,
+                language: payload.language,
+                is_builtin: builtin
+                    .as_ref()
+                    .map(|prompt| prompt.is_builtin)
+                    .unwrap_or(false),
+                order_idx: builtin
+                    .as_ref()
+                    .map(|prompt| prompt.order_idx)
+                    .unwrap_or(99),
+                created_at,
+                updated_at: now,
+            };
+            if let Some(pos) = store.prompts.iter().position(|existing| existing.id == id) {
+                store.prompts[pos] = prompt.clone();
+            } else {
+                store.prompts.push(prompt.clone());
+            }
+            save_json_store(&app, &store)?;
+            Ok(prompt)
+        }
     }
 }
 
 #[tauri::command]
-pub async fn delete_prompt(state: State<'_, DbState>, id: String) -> Result<(), String> {
+pub async fn delete_prompt(
+    app: AppHandle,
+    state: State<'_, DbState>,
+    id: String,
+) -> Result<(), String> {
     let guard = state.db.lock().await;
     match guard.as_ref() {
         Some(db) => db.delete_prompt_template(&id).map_err(|e| format!("{e:#}")),
-        None => Err("DB not initialized".into()),
+        None => {
+            if id.starts_with("builtin_") {
+                return Err("cannot delete built-in template; use reset instead".into());
+            }
+            let mut store = load_json_store(&app)?;
+            store.prompts.retain(|prompt| prompt.id != id);
+            save_json_store(&app, &store)
+        }
     }
 }
 
 #[tauri::command]
-pub async fn reset_prompt(state: State<'_, DbState>, id: String) -> Result<PromptTemplate, String> {
+pub async fn reset_prompt(
+    app: AppHandle,
+    state: State<'_, DbState>,
+    id: String,
+) -> Result<PromptTemplate, String> {
     let guard = state.db.lock().await;
     match guard.as_ref() {
         Some(db) => db
             .reset_prompt_template(&id, BUILTIN_PROMPTS)
             .map_err(|e| format!("{e:#}")),
-        None => Err("DB not initialized".into()),
+        None => {
+            let mut store = load_json_store(&app)?;
+            store.prompts.retain(|prompt| prompt.id != id);
+            save_json_store(&app, &store)?;
+            builtin_prompt_templates()
+                .into_iter()
+                .find(|prompt| prompt.id == id)
+                .ok_or_else(|| format!("no shipped default for builtin id '{id}'"))
+        }
     }
 }
 
@@ -825,27 +1075,54 @@ pub async fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String
 }
 
 #[tauri::command]
-pub async fn get_app_settings(state: State<'_, DbState>) -> Result<AppSettings, String> {
+pub async fn get_app_settings(
+    app: AppHandle,
+    state: State<'_, DbState>,
+) -> Result<AppSettings, String> {
     let guard = state.db.lock().await;
     match guard.as_ref() {
         Some(db) => db.get_app_settings().map_err(|e| format!("{e:#}")),
-        None => Err("DB not initialized".into()),
+        None => Ok(load_json_store(&app)?.settings),
     }
 }
 
 #[tauri::command]
 pub async fn update_app_settings(
+    app: AppHandle,
     state: State<'_, DbState>,
     settings: AppSettings,
 ) -> Result<AppSettings, String> {
+    let normalized_hotkey =
+        crate::hotkey::normalize_dictation_hotkey_id(&settings.dictation_hotkey);
+    crate::hotkey::register_dictation_hotkey(&app, &normalized_hotkey)?;
+
     let guard = state.db.lock().await;
     match guard.as_ref() {
         Some(db) => {
+            let settings = AppSettings {
+                dictation_hotkey: normalized_hotkey,
+                ..settings
+            };
             db.update_app_settings(&settings)
                 .map_err(|e| format!("{e:#}"))?;
             db.get_app_settings().map_err(|e| format!("{e:#}"))
         }
-        None => Err("DB not initialized".into()),
+        None => {
+            let mut store = load_json_store(&app)?;
+            let prompt: String = settings
+                .whisper_initial_prompt
+                .chars()
+                .filter(|c| *c != '\0')
+                .take(700)
+                .collect();
+            store.settings = AppSettings {
+                whisper_initial_prompt: prompt,
+                dictation_hotkey: normalized_hotkey,
+                ..settings
+            };
+            save_json_store(&app, &store)?;
+            Ok(store.settings)
+        }
     }
 }
 
@@ -926,6 +1203,7 @@ pub async fn generate_dictionary_candidates(
 /// small-LLM Japanese quality more than missing rare terms do.
 #[tauri::command]
 pub async fn extract_dictionary_block(
+    app: AppHandle,
     state: State<'_, DbState>,
     input: String,
     context: Option<String>,
@@ -934,7 +1212,7 @@ pub async fn extract_dictionary_block(
         let guard = state.db.lock().await;
         match guard.as_ref() {
             Some(db) => db.list_dictionary().map_err(|e| format!("{e:#}"))?,
-            None => return Ok(String::new()),
+            None => load_json_store(&app)?.dictionary,
         }
     };
     Ok(format_relevant_dictionary(
@@ -1127,5 +1405,39 @@ mod tests {
             None,
         );
         assert_eq!(out, "echo hi again hi");
+    }
+
+    #[test]
+    fn json_prompts_include_builtins_when_store_is_empty() {
+        let store = JsonFallbackStore::default();
+        let prompts = list_json_prompts(&store);
+        assert!(prompts.iter().any(|prompt| prompt.name == "ja_keigo"));
+        assert!(prompts.iter().all(|prompt| prompt.is_builtin));
+    }
+
+    #[test]
+    fn json_prompts_preserve_builtin_metadata_for_overrides() {
+        let mut overridden = builtin_prompt_templates()
+            .into_iter()
+            .find(|prompt| prompt.name == "ja_keigo")
+            .expect("ja_keigo builtin");
+        overridden.label = "Edited".into();
+        overridden.body = "Edited {input}".into();
+        overridden.is_builtin = false;
+        overridden.order_idx = 99;
+
+        let store = JsonFallbackStore {
+            prompts: vec![overridden],
+            ..JsonFallbackStore::default()
+        };
+        let prompts = list_json_prompts(&store);
+        let edited = prompts
+            .iter()
+            .find(|prompt| prompt.name == "ja_keigo")
+            .expect("edited builtin");
+        assert_eq!(edited.label, "Edited");
+        assert_eq!(edited.body, "Edited {input}");
+        assert!(edited.is_builtin);
+        assert_eq!(edited.order_idx, 0);
     }
 }

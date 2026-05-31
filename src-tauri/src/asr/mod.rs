@@ -89,6 +89,12 @@ impl AsrState {
     }
 }
 
+impl Default for AsrState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn resolve_whisper_model_path(
     app: &tauri::AppHandle,
     model_id: &str,

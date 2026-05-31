@@ -1,7 +1,11 @@
-use anyhow::{Context, Result};
+#[cfg(target_os = "macos")]
+use anyhow::Context;
+use anyhow::Result;
+#[cfg(target_os = "macos")]
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "macos")]
 use crate::keystore::SecretKey;
 
 pub mod seed;
@@ -91,28 +95,41 @@ pub struct AppSettings {
     pub input_device: Option<String>,
     /// Whisper model ID: "small", "medium", "large-v3-turbo".
     pub whisper_model: String,
+    /// Global shortcut preset used to toggle dictation recording.
+    #[serde(default = "default_dictation_hotkey")]
+    pub dictation_hotkey: String,
+}
+
+pub fn default_dictation_hotkey() -> String {
+    crate::hotkey::DEFAULT_DICTATION_HOTKEY_ID.to_string()
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            bypass_llm: false,
+            bypass_llm: true,
             whisper_initial_prompt: String::new(),
             input_device: None,
             whisper_model: "small".to_string(),
+            dictation_hotkey: default_dictation_hotkey(),
         }
     }
 }
 
+#[cfg(target_os = "macos")]
 pub struct EncryptedDb {
     conn: Connection,
 }
 
+#[cfg(not(target_os = "macos"))]
+pub struct EncryptedDb;
+
+#[cfg(target_os = "macos")]
 impl EncryptedDb {
     pub fn open(path: &std::path::Path, key: &SecretKey) -> Result<Self> {
         let conn = Connection::open(path)?;
 
-        conn.pragma_update(None, "key", &format!("x'{}'", key.as_hex()))
+        conn.pragma_update(None, "key", format!("x'{}'", key.as_hex()))
             .context("PRAGMA key failed")?;
         conn.pragma_update(None, "cipher_page_size", 4096)
             .context("PRAGMA cipher_page_size failed")?;
@@ -183,6 +200,7 @@ impl EncryptedDb {
                 whisper_initial_prompt TEXT NOT NULL DEFAULT '',
                 input_device TEXT DEFAULT NULL,
                 whisper_model TEXT NOT NULL DEFAULT 'small',
+                dictation_hotkey TEXT NOT NULL DEFAULT 'primary_d',
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
@@ -223,6 +241,19 @@ impl EncryptedDb {
             self.conn.execute_batch(
                 "ALTER TABLE app_settings ADD COLUMN whisper_model TEXT NOT NULL DEFAULT 'small';
                  INSERT OR IGNORE INTO schema_version (version) VALUES (5);",
+            )?;
+        }
+
+        let has_dictation_hotkey: bool = self
+            .conn
+            .prepare("PRAGMA table_info(app_settings)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .any(|col| col == "dictation_hotkey");
+        if !has_dictation_hotkey {
+            self.conn.execute_batch(
+                "ALTER TABLE app_settings ADD COLUMN dictation_hotkey TEXT NOT NULL DEFAULT 'primary_d';
+                 INSERT OR IGNORE INTO schema_version (version) VALUES (6);",
             )?;
         }
 
@@ -575,7 +606,7 @@ impl EncryptedDb {
 
     pub fn get_app_settings(&self) -> Result<AppSettings> {
         let row = self.conn.query_row(
-            "SELECT bypass_llm, whisper_initial_prompt, input_device, whisper_model
+            "SELECT bypass_llm, whisper_initial_prompt, input_device, whisper_model, dictation_hotkey
              FROM app_settings WHERE id = 1",
             [],
             |r| {
@@ -583,18 +614,24 @@ impl EncryptedDb {
                 let prompt: String = r.get(1)?;
                 let input_device: Option<String> = r.get(2)?;
                 let whisper_model: String = r.get(3)?;
-                Ok((bypass != 0, prompt, input_device, whisper_model))
+                let dictation_hotkey: String = r.get(4)?;
+                Ok((bypass != 0, prompt, input_device, whisper_model, dictation_hotkey))
             },
         );
         match row {
-            Ok((bypass_llm, whisper_initial_prompt, input_device, whisper_model)) => {
-                Ok(AppSettings {
-                    bypass_llm,
-                    whisper_initial_prompt,
-                    input_device,
-                    whisper_model,
-                })
-            }
+            Ok((
+                bypass_llm,
+                whisper_initial_prompt,
+                input_device,
+                whisper_model,
+                dictation_hotkey,
+            )) => Ok(AppSettings {
+                bypass_llm,
+                whisper_initial_prompt,
+                input_device,
+                whisper_model,
+                dictation_hotkey: crate::hotkey::normalize_dictation_hotkey_id(&dictation_hotkey),
+            }),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(AppSettings::default()),
             Err(e) => Err(e.into()),
         }
@@ -609,20 +646,83 @@ impl EncryptedDb {
             .take(700)
             .collect();
         self.conn.execute(
-            "INSERT INTO app_settings (id, bypass_llm, whisper_initial_prompt, input_device, whisper_model, updated_at)
-             VALUES (1, ?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO app_settings (id, bypass_llm, whisper_initial_prompt, input_device, whisper_model, dictation_hotkey, updated_at)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(id) DO UPDATE SET
                 bypass_llm = excluded.bypass_llm,
                 whisper_initial_prompt = excluded.whisper_initial_prompt,
                 input_device = excluded.input_device,
                 whisper_model = excluded.whisper_model,
+                dictation_hotkey = excluded.dictation_hotkey,
                 updated_at = excluded.updated_at",
-            rusqlite::params![s.bypass_llm as i64, prompt, s.input_device, s.whisper_model, now],
+            rusqlite::params![
+                s.bypass_llm as i64,
+                prompt,
+                s.input_device,
+                s.whisper_model,
+                crate::hotkey::normalize_dictation_hotkey_id(&s.dictation_hotkey),
+                now
+            ],
         )?;
         Ok(())
     }
 }
 
+#[cfg(not(target_os = "macos"))]
+impl EncryptedDb {
+    pub fn get_app_settings(&self) -> Result<AppSettings> {
+        anyhow::bail!("SQLCipher DB unavailable on this platform")
+    }
+
+    pub fn update_app_settings(&self, _s: &AppSettings) -> Result<()> {
+        anyhow::bail!("SQLCipher DB unavailable on this platform")
+    }
+
+    pub fn list_dictionary(&self) -> Result<Vec<DictionaryEntry>> {
+        anyhow::bail!("SQLCipher DB unavailable on this platform")
+    }
+
+    pub fn upsert_dictionary(&self, _payload: &DictionaryUpsert) -> Result<DictionaryEntry> {
+        anyhow::bail!("SQLCipher DB unavailable on this platform")
+    }
+
+    pub fn delete_dictionary(&self, _id: &str) -> Result<()> {
+        anyhow::bail!("SQLCipher DB unavailable on this platform")
+    }
+
+    pub fn list_prompt_templates(&self) -> Result<Vec<PromptTemplate>> {
+        anyhow::bail!("SQLCipher DB unavailable on this platform")
+    }
+
+    pub fn upsert_prompt_template(
+        &self,
+        _payload: &PromptTemplateUpsert,
+    ) -> Result<PromptTemplate> {
+        anyhow::bail!("SQLCipher DB unavailable on this platform")
+    }
+
+    pub fn delete_prompt_template(&self, _id: &str) -> Result<()> {
+        anyhow::bail!("SQLCipher DB unavailable on this platform")
+    }
+
+    pub fn reset_prompt_template(
+        &self,
+        _id: &str,
+        _defaults: &[(&str, &str, &str, &str)],
+    ) -> Result<PromptTemplate> {
+        anyhow::bail!("SQLCipher DB unavailable on this platform")
+    }
+
+    pub fn list_rewrites(&self, _limit: usize) -> Result<Vec<RewriteRecord>> {
+        anyhow::bail!("SQLCipher DB unavailable on this platform")
+    }
+
+    pub fn search_rewrites(&self, _query: &str, _limit: usize) -> Result<Vec<RewriteRecord>> {
+        anyhow::bail!("SQLCipher DB unavailable on this platform")
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn chrono_now() -> String {
     // UTC 'YYYY-MM-DD HH:MM:SS' to match SQLite's default `datetime('now')`,
     // which is also UTC. Aligns timestamps across schema-default and explicit
@@ -642,6 +742,7 @@ fn chrono_now() -> String {
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{m:02}:{s:02}")
 }
 
+#[cfg(target_os = "macos")]
 fn days_to_ymd(days_since_epoch: i64) -> (i64, u32, u32) {
     // Civil-from-days, Howard Hinnant's algorithm.
     let z = days_since_epoch + 719_468;
@@ -666,5 +767,34 @@ impl DbState {
         Self {
             db: tokio::sync::Mutex::new(None),
         }
+    }
+}
+
+impl Default for DbState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{default_dictation_hotkey, AppSettings};
+
+    #[test]
+    fn app_settings_default_uses_default_dictation_hotkey() {
+        let settings = AppSettings::default();
+        assert_eq!(settings.dictation_hotkey, default_dictation_hotkey());
+    }
+
+    #[test]
+    fn app_settings_deserializes_missing_dictation_hotkey() {
+        let raw = r#"{
+            "bypass_llm": true,
+            "whisper_initial_prompt": "",
+            "input_device": null,
+            "whisper_model": "small"
+        }"#;
+        let settings: AppSettings = serde_json::from_str(raw).expect("legacy settings json");
+        assert_eq!(settings.dictation_hotkey, default_dictation_hotkey());
     }
 }
